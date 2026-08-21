@@ -9,8 +9,14 @@ using PGEScarping.Options;
 
 namespace PGEScarping.Services;
 
-public sealed class PgeScrapingService : IPgeScrapingService
+public sealed class PgeScrapingService : IScrapingModule
 {
+    public ScrapingSourceType SourceType => ScrapingSourceType.PGEBilling;
+    public string DisplayName => "PG&E Billing";
+    public string Description => "Logs in to the PG&E customer portal, walks every linked account's full billing history, and exports the charge breakdown for each bill to Excel.";
+    public string IconGlyph => "⚡";
+    public bool IsAvailable => true;
+
     private readonly IScrapingWebsiteRepository _scrapingWebsiteRepository;
     private readonly ScrapingOptions _options;
     private readonly ILogger<PgeScrapingService> _logger;
@@ -25,13 +31,13 @@ public sealed class PgeScrapingService : IPgeScrapingService
         _logger = logger;
     }
 
-    public async Task<PgeScrapeResult> RunAsync(IProgress<string> progress, CancellationToken cancellationToken = default)
+    public async Task<ScrapeResult> RunAsync(IProgress<string> progress, CancellationToken cancellationToken = default)
     {
         try
         {
-            var website = await _scrapingWebsiteRepository.GetActiveBySourceTypeIdAsync((int)ScrapingSourceType.PGEBilling);
+            var website = await _scrapingWebsiteRepository.GetActiveBySourceTypeIdAsync((int)SourceType);
             if (website is null)
-                return new PgeScrapeResult { Success = false, Message = "No active PG&E website credentials found in the database." };
+                return new ScrapeResult { Success = false, Message = "No active PG&E website credentials found in the database." };
 
             progress.Report($"Logging in to {website.website_url} as {website.username} ...");
 
@@ -41,7 +47,7 @@ public sealed class PgeScrapingService : IPgeScrapingService
 
             var accountNumbers = PgeSeleniumHelper.DiscoverAccountNumbers(driver, _options.TimeoutSeconds);
             if (accountNumbers.Count == 0)
-                return new PgeScrapeResult { Success = false, Message = "No accounts found under this login." };
+                return new ScrapeResult { Success = false, Message = "No accounts found under this login." };
 
             progress.Report($"Found {accountNumbers.Count} account(s): {string.Join(", ", accountNumbers)}");
 
@@ -78,19 +84,19 @@ public sealed class PgeScrapingService : IPgeScrapingService
 
             progress.Report($"Done. {allBills.Count} bill(s) written to {outputFilePath}.");
 
-            return new PgeScrapeResult
+            return new ScrapeResult
             {
                 Success = true,
                 Message = $"{allBills.Count} bill(s) exported across {accountNumbers.Count} account(s).",
                 OutputFilePath = outputFilePath,
-                Bills = allBills
+                RecordCount = allBills.Count
             };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "PgeScrapingService.RunAsync failed");
             progress.Report($"Error: {ex.Message}");
-            return new PgeScrapeResult { Success = false, Message = ex.Message };
+            return new ScrapeResult { Success = false, Message = ex.Message };
         }
     }
 }

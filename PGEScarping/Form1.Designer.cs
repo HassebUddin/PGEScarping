@@ -4,11 +4,18 @@ namespace PGEScarping
     {
         private System.ComponentModel.IContainer components = null;
 
-        private Panel headerPanel;
-        private Label titleLabel;
-        private Label subtitleLabel;
-        private Panel bodyPanel;
-        private Panel controlsPanel;
+        private Panel sidebarPanel;
+        private Panel brandPanel;
+        private Label brandTitleLabel;
+        private Label brandSubtitleLabel;
+        private FlowLayoutPanel moduleListPanel;
+
+        private Panel contentPanel;
+        private Panel moduleHeaderPanel;
+        private Label moduleIconLabel;
+        private Label moduleNameLabel;
+        private Label moduleDescLabel;
+        private Panel actionsPanel;
         private Button btnStart;
         private Button btnOpenFolder;
         private Label statusLabel;
@@ -26,122 +33,177 @@ namespace PGEScarping
 
         private void InitializeComponent()
         {
-            headerPanel = new Panel();
-            titleLabel = new Label();
-            subtitleLabel = new Label();
-            bodyPanel = new Panel();
-            controlsPanel = new Panel();
+            sidebarPanel = new Panel();
+            brandPanel = new Panel();
+            brandTitleLabel = new Label();
+            brandSubtitleLabel = new Label();
+            moduleListPanel = new FlowLayoutPanel();
+            contentPanel = new Panel();
+            moduleHeaderPanel = new Panel();
+            moduleIconLabel = new Label();
+            moduleNameLabel = new Label();
+            moduleDescLabel = new Label();
+            actionsPanel = new Panel();
             btnStart = new Button();
             btnOpenFolder = new Button();
             statusLabel = new Label();
             logBox = new RichTextBox();
             progressBar = new ProgressBar();
-            headerPanel.SuspendLayout();
-            bodyPanel.SuspendLayout();
-            controlsPanel.SuspendLayout();
+
+            sidebarPanel.SuspendLayout();
+            brandPanel.SuspendLayout();
+            contentPanel.SuspendLayout();
+            moduleHeaderPanel.SuspendLayout();
+            actionsPanel.SuspendLayout();
             SuspendLayout();
 
-            // headerPanel
-            headerPanel.BackColor = Color.FromArgb(27, 29, 42);
-            headerPanel.Dock = DockStyle.Top;
-            headerPanel.Height = 92;
-            headerPanel.Controls.Add(subtitleLabel);
-            headerPanel.Controls.Add(titleLabel);
+            // brandTitleLabel
+            brandTitleLabel.AutoSize = true;
+            brandTitleLabel.Font = new Font("Segoe UI", 14F, FontStyle.Bold, GraphicsUnit.Point);
+            brandTitleLabel.ForeColor = Helpers.UiStyleHelper.Accent;
+            brandTitleLabel.Location = new Point(24, 22);
+            brandTitleLabel.Text = "⚡ AUTOMATION HUB";
 
-            // titleLabel
-            titleLabel.AutoSize = true;
-            titleLabel.BackColor = Color.Transparent;
-            titleLabel.Font = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Point);
-            titleLabel.ForeColor = Color.FromArgb(76, 139, 245);
-            titleLabel.Location = new Point(28, 16);
-            titleLabel.Text = "PG&&E Billing Automation";
+            // brandSubtitleLabel
+            brandSubtitleLabel.AutoSize = true;
+            brandSubtitleLabel.Font = new Font("Segoe UI", 8.5F, FontStyle.Regular, GraphicsUnit.Point);
+            brandSubtitleLabel.ForeColor = Helpers.UiStyleHelper.TextSecondary;
+            brandSubtitleLabel.Location = new Point(27, 54);
+            brandSubtitleLabel.Text = "Store utilities scraping suite";
 
-            // subtitleLabel
-            subtitleLabel.AutoSize = true;
-            subtitleLabel.BackColor = Color.Transparent;
-            subtitleLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
-            subtitleLabel.ForeColor = Color.FromArgb(154, 160, 180);
-            subtitleLabel.Location = new Point(31, 56);
-            subtitleLabel.Text = "Selenium-powered billing history scraper";
+            // brandPanel
+            brandPanel.BackColor = Helpers.UiStyleHelper.Sidebar;
+            brandPanel.Dock = DockStyle.Top;
+            brandPanel.Height = 96;
+            brandPanel.Controls.Add(brandSubtitleLabel);
+            brandPanel.Controls.Add(brandTitleLabel);
 
-            // controlsPanel
-            controlsPanel.BackColor = Color.Transparent;
-            controlsPanel.Dock = DockStyle.Top;
-            controlsPanel.Height = 100;
-            controlsPanel.Controls.Add(statusLabel);
-            controlsPanel.Controls.Add(btnOpenFolder);
-            controlsPanel.Controls.Add(btnStart);
+            // moduleListPanel
+            moduleListPanel.AutoScroll = true;
+            moduleListPanel.BackColor = Helpers.UiStyleHelper.Sidebar;
+            moduleListPanel.Dock = DockStyle.Fill;
+            moduleListPanel.FlowDirection = FlowDirection.TopDown;
+            moduleListPanel.Padding = new Padding(16, 16, 16, 16);
+            moduleListPanel.WrapContents = false;
+
+            // sidebarPanel
+            sidebarPanel.BackColor = Helpers.UiStyleHelper.Sidebar;
+            sidebarPanel.Dock = DockStyle.Left;
+            sidebarPanel.Width = 300;
+            sidebarPanel.Controls.Add(moduleListPanel);
+            sidebarPanel.Controls.Add(brandPanel);
+
+            // moduleIconLabel
+            moduleIconLabel.AutoSize = true;
+            moduleIconLabel.Font = new Font("Segoe UI", 26F, FontStyle.Regular, GraphicsUnit.Point);
+            moduleIconLabel.Location = new Point(0, 4);
+            moduleIconLabel.Text = "⚡";
+
+            // moduleNameLabel
+            moduleNameLabel.AutoSize = true;
+            moduleNameLabel.Font = new Font("Segoe UI", 16F, FontStyle.Bold, GraphicsUnit.Point);
+            moduleNameLabel.ForeColor = Helpers.UiStyleHelper.TextPrimary;
+            moduleNameLabel.Location = new Point(56, 2);
+            moduleNameLabel.Text = "PG&&E Billing";
+
+            // moduleDescLabel
+            moduleDescLabel.AutoSize = false;
+            moduleDescLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            moduleDescLabel.ForeColor = Helpers.UiStyleHelper.TextSecondary;
+            moduleDescLabel.Location = new Point(58, 38);
+            moduleDescLabel.Size = new Size(600, 40);
+            moduleDescLabel.Text = "";
+
+            // moduleHeaderPanel
+            moduleHeaderPanel.BackColor = Color.Transparent;
+            moduleHeaderPanel.Dock = DockStyle.Top;
+            moduleHeaderPanel.Height = 92;
+            moduleHeaderPanel.Controls.Add(moduleDescLabel);
+            moduleHeaderPanel.Controls.Add(moduleNameLabel);
+            moduleHeaderPanel.Controls.Add(moduleIconLabel);
 
             // btnStart
-            btnStart.BackColor = Color.FromArgb(76, 139, 245);
+            btnStart.BackColor = Helpers.UiStyleHelper.Accent;
             btnStart.FlatStyle = FlatStyle.Flat;
             btnStart.FlatAppearance.BorderSize = 0;
-            btnStart.Font = new Font("Segoe UI", 11F, FontStyle.Bold, GraphicsUnit.Point);
+            btnStart.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
             btnStart.ForeColor = Color.White;
-            btnStart.Location = new Point(0, 0);
-            btnStart.Size = new Size(200, 46);
-            btnStart.Text = "Start Scraping";
+            btnStart.Location = new Point(0, 8);
+            btnStart.Size = new Size(190, 44);
+            btnStart.Text = "▶  Start Scraping";
             btnStart.UseVisualStyleBackColor = false;
             btnStart.Click += btnStart_Click;
 
             // btnOpenFolder
-            btnOpenFolder.BackColor = Color.FromArgb(40, 42, 58);
+            btnOpenFolder.BackColor = Helpers.UiStyleHelper.Surface;
             btnOpenFolder.Enabled = false;
             btnOpenFolder.FlatStyle = FlatStyle.Flat;
             btnOpenFolder.FlatAppearance.BorderSize = 0;
-            btnOpenFolder.Font = new Font("Segoe UI", 11F, FontStyle.Regular, GraphicsUnit.Point);
-            btnOpenFolder.ForeColor = Color.FromArgb(224, 226, 235);
-            btnOpenFolder.Location = new Point(216, 0);
-            btnOpenFolder.Size = new Size(200, 46);
-            btnOpenFolder.Text = "Open Output Folder";
+            btnOpenFolder.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
+            btnOpenFolder.ForeColor = Helpers.UiStyleHelper.TextPrimary;
+            btnOpenFolder.Location = new Point(206, 8);
+            btnOpenFolder.Size = new Size(190, 44);
+            btnOpenFolder.Text = "📁  Open Output Folder";
             btnOpenFolder.UseVisualStyleBackColor = false;
             btnOpenFolder.Click += btnOpenFolder_Click;
 
             // statusLabel
             statusLabel.AutoSize = true;
             statusLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
-            statusLabel.ForeColor = Color.FromArgb(154, 160, 180);
-            statusLabel.Location = new Point(2, 62);
+            statusLabel.ForeColor = Helpers.UiStyleHelper.TextSecondary;
+            statusLabel.Location = new Point(2, 56);
             statusLabel.Text = "Ready.";
+
+            // actionsPanel
+            actionsPanel.BackColor = Color.Transparent;
+            actionsPanel.Dock = DockStyle.Top;
+            actionsPanel.Height = 76;
+            actionsPanel.Controls.Add(statusLabel);
+            actionsPanel.Controls.Add(btnOpenFolder);
+            actionsPanel.Controls.Add(btnStart);
+
+            // logBox
+            logBox.BackColor = Color.FromArgb(10, 11, 16);
+            logBox.BorderStyle = BorderStyle.FixedSingle;
+            logBox.Dock = DockStyle.Fill;
+            logBox.Font = new Font("Consolas", 9.75F, FontStyle.Regular, GraphicsUnit.Point);
+            logBox.ForeColor = Helpers.UiStyleHelper.LogText;
+            logBox.ReadOnly = true;
+
+            // contentPanel
+            contentPanel.BackColor = Helpers.UiStyleHelper.Background;
+            contentPanel.Dock = DockStyle.Fill;
+            contentPanel.Padding = new Padding(32, 24, 32, 24);
+            contentPanel.Controls.Add(logBox);
+            contentPanel.Controls.Add(actionsPanel);
+            contentPanel.Controls.Add(moduleHeaderPanel);
 
             // progressBar
             progressBar.Dock = DockStyle.Bottom;
             progressBar.Style = ProgressBarStyle.Marquee;
             progressBar.MarqueeAnimationSpeed = 0;
-            progressBar.Height = 6;
-
-            // logBox
-            logBox.BackColor = Color.FromArgb(13, 14, 20);
-            logBox.BorderStyle = BorderStyle.FixedSingle;
-            logBox.Dock = DockStyle.Fill;
-            logBox.Font = new Font("Consolas", 9.75F, FontStyle.Regular, GraphicsUnit.Point);
-            logBox.ForeColor = Color.FromArgb(150, 230, 170);
-            logBox.ReadOnly = true;
-
-            // bodyPanel
-            bodyPanel.BackColor = Color.FromArgb(18, 19, 26);
-            bodyPanel.Dock = DockStyle.Fill;
-            bodyPanel.Padding = new Padding(28, 20, 28, 20);
-            bodyPanel.Controls.Add(logBox);
-            bodyPanel.Controls.Add(controlsPanel);
+            progressBar.Height = 4;
 
             // Form1
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            BackColor = Color.FromArgb(18, 19, 26);
-            ClientSize = new Size(1000, 650);
-            MinimumSize = new Size(760, 480);
-            Controls.Add(bodyPanel);
-            Controls.Add(headerPanel);
+            BackColor = Helpers.UiStyleHelper.Background;
+            ClientSize = new Size(1180, 700);
+            MinimumSize = new Size(900, 560);
+            Controls.Add(contentPanel);
+            Controls.Add(sidebarPanel);
             Controls.Add(progressBar);
-            Text = "PG&E Billing Automation";
+            Text = "Store Automation Hub";
             StartPosition = FormStartPosition.CenterScreen;
 
-            headerPanel.ResumeLayout(false);
-            headerPanel.PerformLayout();
-            controlsPanel.ResumeLayout(false);
-            controlsPanel.PerformLayout();
-            bodyPanel.ResumeLayout(false);
+            sidebarPanel.ResumeLayout(false);
+            brandPanel.ResumeLayout(false);
+            brandPanel.PerformLayout();
+            contentPanel.ResumeLayout(false);
+            moduleHeaderPanel.ResumeLayout(false);
+            moduleHeaderPanel.PerformLayout();
+            actionsPanel.ResumeLayout(false);
+            actionsPanel.PerformLayout();
             ResumeLayout(false);
         }
     }

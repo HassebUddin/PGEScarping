@@ -34,7 +34,7 @@ internal static class Program
 
         services.Configure<ScrapingOptions>(configuration.GetSection(ScrapingOptions.SectionName));
         services.AddScoped<IScrapingWebsiteRepository, ScrapingWebsiteRepository>();
-        services.AddScoped<IPgeScrapingService, PgeScrapingService>();
+        services.AddScoped<IScrapingModule, PgeScrapingService>();
         services.AddTransient<Form1>();
 
         using var provider = services.BuildServiceProvider();
