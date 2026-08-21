@@ -21,3 +21,4 @@ Thumbs.db
 
 ## Secrets (do not commit real credentials)
 appsettings.Local.json
+PGEScarping/appsettings.json
