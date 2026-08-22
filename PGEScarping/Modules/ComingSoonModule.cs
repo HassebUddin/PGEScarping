@@ -1,3 +1,4 @@
+using Microsoft.Web.WebView2.WinForms;
 using PGEScarping.Dto;
 using PGEScarping.Enums;
 using PGEScarping.Interfaces;
@@ -20,6 +21,10 @@ public sealed class ComingSoonModule : IScrapingModule
         Description = description;
     }
 
-    public Task<ScrapeResult> RunAsync(IProgress<string> progress, CancellationToken cancellationToken = default)
+    public Task<ScrapeResult> RunAsync(
+        WebView2 browser,
+        IProgress<string> progress,
+        Func<string, Task<string?>> promptForInputAsync,
+        CancellationToken cancellationToken = default)
         => throw new NotSupportedException($"{DisplayName} is not available yet.");
 }

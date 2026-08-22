@@ -8,14 +8,17 @@ namespace PGEScarping
     public partial class Form1 : Form
     {
         private readonly List<IScrapingModule> _modules;
+        private readonly AppLogFile _logFile;
         private IScrapingModule? _currentModule;
         private Panel? _selectedCard;
         private bool _isRunning;
         private string _lastOutputFolder = "";
+        private TaskCompletionSource<string?>? _pendingInputPrompt;
 
-        public Form1(IEnumerable<IScrapingModule> modules)
+        public Form1(IEnumerable<IScrapingModule> modules, AppLogFile logFile)
         {
             InitializeComponent();
+            _logFile = logFile;
 
             _modules = modules.ToList();
             _modules.Add(new ComingSoonModule(ScrapingSourceType.InternetBilling, "Internet Billing", "🌐",
@@ -33,6 +36,18 @@ namespace PGEScarping
 
             if (firstCard is not null)
                 SelectModule(_modules[0], firstCard);
+
+            Load += Form1_Load;
+        }
+
+        private async void Form1_Load(object? sender, EventArgs e)
+        {
+            btnStart.Enabled = false;
+            statusLabel.Text = "Initializing embedded browser...";
+            await browserView.EnsureCoreWebView2Async();
+            statusLabel.Text = _currentModule?.IsAvailable == true ? "Ready." : "This module is coming soon.";
+            btnStart.Enabled = _currentModule?.IsAvailable == true;
+            AppendLog($"Log file: {_logFile.FilePath}");
         }
 
         private Panel BuildModuleCard(IScrapingModule module)
@@ -141,7 +156,7 @@ namespace PGEScarping
 
             try
             {
-                var result = await _currentModule.RunAsync(progress);
+                var result = await _currentModule.RunAsync(browserView, progress, PromptForInputAsync);
 
                 if (result.Success)
                 {
@@ -161,6 +176,8 @@ namespace PGEScarping
                 progressBar.MarqueeAnimationSpeed = 0;
                 btnStart.Enabled = true;
                 _isRunning = false;
+                codePromptPanel.Visible = false;
+                _pendingInputPrompt = null;
             }
         }
 
@@ -170,11 +187,55 @@ namespace PGEScarping
                 System.Diagnostics.Process.Start("explorer.exe", _lastOutputFolder);
         }
 
+        // Shows an inline prompt bar (instead of a separate popup Form) and waits for the user to
+        // submit it. A brand new top-level Form alongside the embedded WebView2 control was found to
+        // crash the whole process, so the request is answered in-place within this same window.
+        private Task<string?> PromptForInputAsync(string message)
+        {
+            _pendingInputPrompt = new TaskCompletionSource<string?>();
+
+            codePromptLabel.Text = message;
+            codeInputBox.Text = "";
+            codePromptPanel.Visible = true;
+            codeInputBox.Focus();
+
+            return _pendingInputPrompt.Task;
+        }
+
+        private void SubmitCodePrompt()
+        {
+            if (_pendingInputPrompt is null)
+                return;
+
+            var value = codeInputBox.Text.Trim();
+            codePromptPanel.Visible = false;
+            _pendingInputPrompt.TrySetResult(string.IsNullOrEmpty(value) ? null : value);
+            _pendingInputPrompt = null;
+        }
+
+        private void btnSubmitCode_Click(object? sender, EventArgs e) => SubmitCodePrompt();
+
+        private void codeInputBox_KeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Enter)
+                return;
+
+            e.SuppressKeyPress = true;
+            SubmitCodePrompt();
+        }
+
         private void AppendLog(string message)
         {
-            logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+            var line = $"[{DateTime.Now:HH:mm:ss}] {message}";
+            logBox.AppendText(line + Environment.NewLine);
             logBox.SelectionStart = logBox.Text.Length;
             logBox.ScrollToCaret();
+            _logFile.Append(line);
+        }
+
+        private void btnViewLog_Click(object? sender, EventArgs e)
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_logFile.FilePath) { UseShellExecute = true });
         }
     }
 }

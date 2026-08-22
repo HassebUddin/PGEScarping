@@ -1,3 +1,4 @@
+using Microsoft.Web.WebView2.WinForms;
 using PGEScarping.Dto;
 using PGEScarping.Enums;
 
@@ -11,5 +12,9 @@ public interface IScrapingModule
     string IconGlyph { get; }
     bool IsAvailable { get; }
 
-    Task<ScrapeResult> RunAsync(IProgress<string> progress, CancellationToken cancellationToken = default);
+    Task<ScrapeResult> RunAsync(
+        WebView2 browser,
+        IProgress<string> progress,
+        Func<string, Task<string?>> promptForInputAsync,
+        CancellationToken cancellationToken = default);
 }

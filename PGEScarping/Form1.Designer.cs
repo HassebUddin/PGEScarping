@@ -18,7 +18,14 @@ namespace PGEScarping
         private Panel actionsPanel;
         private Button btnStart;
         private Button btnOpenFolder;
+        private Button btnViewLog;
         private Label statusLabel;
+        private Panel codePromptPanel;
+        private Label codePromptLabel;
+        private TextBox codeInputBox;
+        private Button btnSubmitCode;
+        private SplitContainer mainSplit;
+        private Microsoft.Web.WebView2.WinForms.WebView2 browserView;
         private RichTextBox logBox;
         private ProgressBar progressBar;
 
@@ -46,7 +53,14 @@ namespace PGEScarping
             actionsPanel = new Panel();
             btnStart = new Button();
             btnOpenFolder = new Button();
+            btnViewLog = new Button();
             statusLabel = new Label();
+            codePromptPanel = new Panel();
+            codePromptLabel = new Label();
+            codeInputBox = new TextBox();
+            btnSubmitCode = new Button();
+            mainSplit = new SplitContainer();
+            browserView = new Microsoft.Web.WebView2.WinForms.WebView2();
             logBox = new RichTextBox();
             progressBar = new ProgressBar();
 
@@ -55,6 +69,12 @@ namespace PGEScarping
             contentPanel.SuspendLayout();
             moduleHeaderPanel.SuspendLayout();
             actionsPanel.SuspendLayout();
+            codePromptPanel.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)mainSplit).BeginInit();
+            mainSplit.Panel1.SuspendLayout();
+            mainSplit.Panel2.SuspendLayout();
+            mainSplit.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)browserView).BeginInit();
             SuspendLayout();
 
             // brandTitleLabel
@@ -147,6 +167,18 @@ namespace PGEScarping
             btnOpenFolder.UseVisualStyleBackColor = false;
             btnOpenFolder.Click += btnOpenFolder_Click;
 
+            // btnViewLog
+            btnViewLog.BackColor = Helpers.UiStyleHelper.Surface;
+            btnViewLog.FlatStyle = FlatStyle.Flat;
+            btnViewLog.FlatAppearance.BorderSize = 0;
+            btnViewLog.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
+            btnViewLog.ForeColor = Helpers.UiStyleHelper.TextPrimary;
+            btnViewLog.Location = new Point(412, 8);
+            btnViewLog.Size = new Size(160, 44);
+            btnViewLog.Text = "📝  View Log File";
+            btnViewLog.UseVisualStyleBackColor = false;
+            btnViewLog.Click += btnViewLog_Click;
+
             // statusLabel
             statusLabel.AutoSize = true;
             statusLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
@@ -159,22 +191,76 @@ namespace PGEScarping
             actionsPanel.Dock = DockStyle.Top;
             actionsPanel.Height = 76;
             actionsPanel.Controls.Add(statusLabel);
+            actionsPanel.Controls.Add(btnViewLog);
             actionsPanel.Controls.Add(btnOpenFolder);
             actionsPanel.Controls.Add(btnStart);
+
+            // codePromptLabel
+            codePromptLabel.AutoSize = false;
+            codePromptLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            codePromptLabel.ForeColor = Helpers.UiStyleHelper.TextPrimary;
+            codePromptLabel.Location = new Point(0, 10);
+            codePromptLabel.Size = new Size(700, 40);
+            codePromptLabel.Text = "";
+
+            // codeInputBox
+            codeInputBox.Font = new Font("Consolas", 13F, FontStyle.Bold, GraphicsUnit.Point);
+            codeInputBox.MaxLength = 6;
+            codeInputBox.Location = new Point(710, 15);
+            codeInputBox.Size = new Size(120, 30);
+            codeInputBox.TextAlign = HorizontalAlignment.Center;
+            codeInputBox.KeyDown += codeInputBox_KeyDown;
+
+            // btnSubmitCode
+            btnSubmitCode.BackColor = Helpers.UiStyleHelper.Accent;
+            btnSubmitCode.FlatStyle = FlatStyle.Flat;
+            btnSubmitCode.FlatAppearance.BorderSize = 0;
+            btnSubmitCode.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
+            btnSubmitCode.ForeColor = Color.White;
+            btnSubmitCode.Location = new Point(840, 12);
+            btnSubmitCode.Size = new Size(120, 36);
+            btnSubmitCode.Text = "Submit";
+            btnSubmitCode.UseVisualStyleBackColor = false;
+            btnSubmitCode.Click += btnSubmitCode_Click;
+
+            // codePromptPanel
+            codePromptPanel.BackColor = Helpers.UiStyleHelper.AccentSoft;
+            codePromptPanel.Dock = DockStyle.Top;
+            codePromptPanel.Height = 60;
+            codePromptPanel.Padding = new Padding(16, 0, 0, 0);
+            codePromptPanel.Visible = false;
+            codePromptPanel.Controls.Add(btnSubmitCode);
+            codePromptPanel.Controls.Add(codeInputBox);
+            codePromptPanel.Controls.Add(codePromptLabel);
+
+            // browserView
+            browserView.BackColor = Color.White;
+            browserView.CreationProperties = null;
+            browserView.DefaultBackgroundColor = Color.White;
+            browserView.Dock = DockStyle.Fill;
 
             // logBox
             logBox.BackColor = Color.FromArgb(10, 11, 16);
             logBox.BorderStyle = BorderStyle.FixedSingle;
             logBox.Dock = DockStyle.Fill;
-            logBox.Font = new Font("Consolas", 9.75F, FontStyle.Regular, GraphicsUnit.Point);
+            logBox.Font = new Font("Consolas", 9F, FontStyle.Regular, GraphicsUnit.Point);
             logBox.ForeColor = Helpers.UiStyleHelper.LogText;
             logBox.ReadOnly = true;
+
+            // mainSplit
+            mainSplit.BorderStyle = BorderStyle.FixedSingle;
+            mainSplit.Dock = DockStyle.Fill;
+            mainSplit.Panel1.Controls.Add(browserView);
+            mainSplit.Panel2.Controls.Add(logBox);
+            mainSplit.SplitterDistance = 640;
+            mainSplit.SplitterWidth = 6;
 
             // contentPanel
             contentPanel.BackColor = Helpers.UiStyleHelper.Background;
             contentPanel.Dock = DockStyle.Fill;
             contentPanel.Padding = new Padding(32, 24, 32, 24);
-            contentPanel.Controls.Add(logBox);
+            contentPanel.Controls.Add(mainSplit);
+            contentPanel.Controls.Add(codePromptPanel);
             contentPanel.Controls.Add(actionsPanel);
             contentPanel.Controls.Add(moduleHeaderPanel);
 
@@ -204,6 +290,13 @@ namespace PGEScarping
             moduleHeaderPanel.PerformLayout();
             actionsPanel.ResumeLayout(false);
             actionsPanel.PerformLayout();
+            codePromptPanel.ResumeLayout(false);
+            codePromptPanel.PerformLayout();
+            mainSplit.Panel1.ResumeLayout(false);
+            mainSplit.Panel2.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)mainSplit).EndInit();
+            mainSplit.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)browserView).EndInit();
             ResumeLayout(false);
         }
     }
