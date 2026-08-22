@@ -40,14 +40,55 @@ namespace PGEScarping
             Load += Form1_Load;
         }
 
+        private const string AccountNumberPlaceholder = "Required — enter the account number to process";
+
         private async void Form1_Load(object? sender, EventArgs e)
         {
             btnStart.Enabled = false;
-            statusLabel.Text = "Initializing embedded browser...";
+            SetStatus("Initializing embedded browser...", StatusKind.Running);
             await browserView.EnsureCoreWebView2Async();
-            statusLabel.Text = _currentModule?.IsAvailable == true ? "Ready." : "This module is coming soon.";
+            SetStatus(_currentModule?.IsAvailable == true ? "Ready." : "This module is coming soon.", StatusKind.Ready);
             btnStart.Enabled = _currentModule?.IsAvailable == true;
-            AppendLog($"Log file: {_logFile.FilePath}");
+        }
+
+        private enum StatusKind { Ready, Running, Success, Error }
+
+        private void SetStatus(string message, StatusKind kind)
+        {
+            var (dot, color) = kind switch
+            {
+                StatusKind.Running => ("●", UiStyleHelper.Accent),
+                StatusKind.Success => ("●", UiStyleHelper.Success),
+                StatusKind.Error => ("●", UiStyleHelper.Danger),
+                _ => ("○", UiStyleHelper.TextSecondary)
+            };
+
+            statusLabel.Text = $"{dot}  {message}";
+            statusLabel.ForeColor = color;
+        }
+
+        private void accountNumberBox_Enter(object? sender, EventArgs e)
+        {
+            if (accountNumberBox.Text == AccountNumberPlaceholder)
+            {
+                accountNumberBox.Text = "";
+                accountNumberBox.ForeColor = UiStyleHelper.TextPrimary;
+            }
+        }
+
+        private void accountNumberBox_Leave(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(accountNumberBox.Text))
+            {
+                accountNumberBox.Text = AccountNumberPlaceholder;
+                accountNumberBox.ForeColor = UiStyleHelper.TextSecondary;
+            }
+        }
+
+        private string? GetAccountNumberOverride()
+        {
+            var value = accountNumberBox.Text.Trim();
+            return string.IsNullOrWhiteSpace(value) || value == AccountNumberPlaceholder ? null : value;
         }
 
         private Panel BuildModuleCard(IScrapingModule module)
@@ -58,29 +99,47 @@ namespace PGEScarping
             var card = new Panel
             {
                 Width = 252,
-                Height = 76,
+                Height = 80,
                 Margin = new Padding(0, 0, 0, 12),
                 BackColor = UiStyleHelper.Surface,
                 Cursor = isAvailable ? Cursors.Hand : Cursors.Default,
             };
-            UiStyleHelper.ApplyRoundedCorners(card, 14);
+            UiStyleHelper.ApplyRoundedCorners(card, 16);
+
+            var accentBar = new Panel
+            {
+                BackColor = UiStyleHelper.Accent,
+                Location = new Point(0, 10),
+                Size = new Size(4, card.Height - 20),
+                Visible = false
+            };
+            card.Tag = accentBar;
+
+            var iconBadge = new Panel
+            {
+                BackColor = isAvailable ? UiStyleHelper.AccentSoft : UiStyleHelper.Surface,
+                Location = new Point(14, 14),
+                Size = new Size(52, 52)
+            };
+            UiStyleHelper.ApplyRoundedCorners(iconBadge, 14);
 
             var iconLabel = new Label
             {
                 Text = module.IconGlyph,
-                Font = new Font("Segoe UI", 20F, FontStyle.Regular, GraphicsUnit.Point),
-                AutoSize = true,
-                Location = new Point(16, 16),
+                Font = new Font("Segoe UI", 18F, FontStyle.Regular, GraphicsUnit.Point),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
                 BackColor = Color.Transparent,
                 ForeColor = foreColor
             };
+            iconBadge.Controls.Add(iconLabel);
 
             var nameLabel = new Label
             {
                 Text = module.DisplayName,
                 Font = new Font("Segoe UI", 10.5F, FontStyle.Bold, GraphicsUnit.Point),
                 AutoSize = true,
-                Location = new Point(58, 14),
+                Location = new Point(78, 20),
                 BackColor = Color.Transparent,
                 ForeColor = foreColor
             };
@@ -90,12 +149,13 @@ namespace PGEScarping
                 Text = isAvailable ? "● ACTIVE" : "○ SOON",
                 Font = new Font("Segoe UI", 7.5F, FontStyle.Bold, GraphicsUnit.Point),
                 AutoSize = true,
-                Location = new Point(58, 40),
+                Location = new Point(78, 46),
                 BackColor = Color.Transparent,
                 ForeColor = isAvailable ? UiStyleHelper.Success : UiStyleHelper.TextSecondary
             };
 
-            card.Controls.Add(iconLabel);
+            card.Controls.Add(accentBar);
+            card.Controls.Add(iconBadge);
             card.Controls.Add(nameLabel);
             card.Controls.Add(badge);
 
@@ -125,17 +185,23 @@ namespace PGEScarping
                 return;
 
             if (_selectedCard is not null)
+            {
                 _selectedCard.BackColor = UiStyleHelper.Surface;
+                if (_selectedCard.Tag is Panel previousAccentBar)
+                    previousAccentBar.Visible = false;
+            }
 
             card.BackColor = UiStyleHelper.AccentSoft;
+            if (card.Tag is Panel accentBar)
+                accentBar.Visible = true;
+
             _selectedCard = card;
             _currentModule = module;
 
             moduleIconLabel.Text = module.IconGlyph;
             moduleNameLabel.Text = module.DisplayName;
             moduleDescLabel.Text = module.Description;
-            logBox.Clear();
-            statusLabel.Text = module.IsAvailable ? "Ready." : "This module is coming soon.";
+            SetStatus(module.IsAvailable ? "Ready." : "This module is coming soon.", StatusKind.Ready);
             btnStart.Enabled = module.IsAvailable;
             btnOpenFolder.Enabled = false;
         }
@@ -145,35 +211,42 @@ namespace PGEScarping
             if (_currentModule is null || !_currentModule.IsAvailable)
                 return;
 
+            var accountNumberOverride = GetAccountNumberOverride();
+            if (accountNumberOverride is null)
+            {
+                MessageBox.Show(this, "Please enter an account number before starting.", "Account number required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                accountNumberBox.Focus();
+                return;
+            }
+
             _isRunning = true;
             btnStart.Enabled = false;
             btnOpenFolder.Enabled = false;
-            logBox.Clear();
-            statusLabel.Text = "Running...";
-            progressBar.MarqueeAnimationSpeed = 30;
+            SetStatus("Running...", StatusKind.Running);
+            progressBar.IsRunning = true;
 
             var progress = new Progress<string>(AppendLog);
 
             try
             {
-                var result = await _currentModule.RunAsync(browserView, progress, PromptForInputAsync);
+                var result = await _currentModule.RunAsync(browserView, progress, PromptForInputAsync, accountNumberOverride);
 
                 if (result.Success)
                 {
                     _lastOutputFolder = Path.GetDirectoryName(result.OutputFilePath) ?? "";
-                    statusLabel.Text = result.Message;
+                    SetStatus(result.Message, StatusKind.Success);
                     btnOpenFolder.Enabled = !string.IsNullOrWhiteSpace(_lastOutputFolder);
                     MessageBox.Show(this, result.Message, "Scraping complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 else
                 {
-                    statusLabel.Text = "Failed: " + result.Message;
+                    SetStatus("Failed: " + result.Message, StatusKind.Error);
                     MessageBox.Show(this, result.Message, "Scraping failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             finally
             {
-                progressBar.MarqueeAnimationSpeed = 0;
+                progressBar.IsRunning = false;
                 btnStart.Enabled = true;
                 _isRunning = false;
                 codePromptPanel.Visible = false;
@@ -227,9 +300,7 @@ namespace PGEScarping
         private void AppendLog(string message)
         {
             var line = $"[{DateTime.Now:HH:mm:ss}] {message}";
-            logBox.AppendText(line + Environment.NewLine);
-            logBox.SelectionStart = logBox.Text.Length;
-            logBox.ScrollToCaret();
+            SetStatus(message, StatusKind.Running);
             _logFile.Append(line);
         }
 

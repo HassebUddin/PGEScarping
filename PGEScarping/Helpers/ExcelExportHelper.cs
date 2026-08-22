@@ -12,6 +12,55 @@ public static class ExcelExportHelper
         "Total Tax Amount", "Other Charges", "Total Usage (kWh)", "Bill PDF File"
     ];
 
+    // Reads back a previously-written workbook so a new run can merge into it instead of overwriting
+    // it — the columns are written in the exact order/format WriteWorkbook uses, so this is the
+    // inverse of that method.
+    public static List<PgeBillRecord> ReadExistingRecords(string filePath)
+    {
+        var bills = new List<PgeBillRecord>();
+        using var wb = new XLWorkbook(filePath);
+        var ws = wb.Worksheets.First();
+
+        var row = 2;
+        while (!ws.Cell(row, 1).IsEmpty())
+        {
+            bills.Add(new PgeBillRecord
+            {
+                AccountNumber = ws.Cell(row, 1).GetString(),
+                AccountName = ws.Cell(row, 2).GetString(),
+                StatementDate = DateTime.TryParse(ws.Cell(row, 3).GetString(), out var statementDate) ? statementDate : null,
+                DueDate = DateTime.TryParse(ws.Cell(row, 4).GetString(), out var dueDate) ? dueDate : null,
+                TotalBillAmount = ws.Cell(row, 5).GetValue<decimal>(),
+                ElectricityCharges = ws.Cell(row, 6).GetValue<decimal>(),
+                CreditReceived = ws.Cell(row, 7).GetValue<decimal>(),
+                TotalTaxAmount = ws.Cell(row, 8).GetValue<decimal>(),
+                OtherCharges = ws.Cell(row, 9).GetValue<decimal>(),
+                TotalUsageKwh = ws.Cell(row, 10).GetValue<decimal>(),
+                BillPdfFileName = ws.Cell(row, 11).GetString()
+            });
+            row++;
+        }
+
+        return bills;
+    }
+
+    // Merges newly-scraped bills into whatever's already in the output file (keyed by account +
+    // statement date), so running the scraper again — especially for just one account via the
+    // account-number override — adds to the workbook instead of wiping out every other account's data.
+    public static List<PgeBillRecord> MergeWithExisting(string filePath, List<PgeBillRecord> newBills)
+    {
+        var existing = File.Exists(filePath) ? ReadExistingRecords(filePath) : [];
+
+        var merged = new Dictionary<string, PgeBillRecord>();
+        foreach (var bill in existing.Concat(newBills))
+            merged[$"{bill.AccountNumber}|{bill.StatementDate:yyyy-MM-dd}"] = bill;
+
+        return merged.Values
+            .OrderBy(b => b.AccountNumber)
+            .ThenBy(b => b.StatementDate)
+            .ToList();
+    }
+
     public static void WriteWorkbook(string filePath, List<PgeBillRecord> bills, string sheetName = "PGE Billing History")
     {
         using var wb = new XLWorkbook();

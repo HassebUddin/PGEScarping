@@ -25,6 +25,7 @@ public sealed class ComingSoonModule : IScrapingModule
         WebView2 browser,
         IProgress<string> progress,
         Func<string, Task<string?>> promptForInputAsync,
+        string? accountNumberOverride = null,
         CancellationToken cancellationToken = default)
         => throw new NotSupportedException($"{DisplayName} is not available yet.");
 }

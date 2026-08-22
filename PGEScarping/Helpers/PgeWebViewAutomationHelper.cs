@@ -9,6 +9,31 @@ namespace PGEScarping.Helpers;
 // relying on plain CSS selectors, which won't reach into shadow-hosted components.
 public static class PgeWebViewAutomationHelper
 {
+    // Flashes a bright red glow around an element before clicking it — since the embedded browser is
+    // always visible in the app's own window, this lets the user actually see, in real time, exactly
+    // which element the automation is about to click, instead of it happening invisibly fast.
+    // ExecuteScriptAsync awaits any Promise a script returns, so returning one here makes the C# await
+    // naturally wait out the highlight-then-click sequence with no extra round trip needed.
+    public const string HighlightAndClickJs = @"
+function highlightAndClick(el) {
+  return new Promise(resolve => {
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const prevOutline = el.style.outline;
+    const prevBoxShadow = el.style.boxShadow;
+    el.style.outline = '3px solid #ff3366';
+    el.style.boxShadow = '0 0 14px 5px rgba(255,51,102,0.85)';
+    setTimeout(() => {
+      el.click();
+      setTimeout(() => {
+        el.style.outline = prevOutline;
+        el.style.boxShadow = prevBoxShadow;
+      }, 400);
+      resolve(true);
+    }, 700);
+  });
+}
+";
+
     public const string FindInShadowJs = @"
 function findInShadow(root, selector) {
   const direct = root.querySelector(selector);
@@ -122,6 +147,74 @@ return el ? el.value : null;
         }
 
         return false;
+    }
+
+    // The billing history table's "Jump to [N] of <total>" pager is a Lightning base combobox
+    // (confirmed via live devtools inspection): a
+    //   <button role=""combobox"" aria-haspopup=""listbox"" aria-controls=""dropdown-element-NNN"" data-value=""1"">
+    // whose listbox (found directly via that aria-controls id — ids are unique document-wide, so this
+    // works regardless of any shadow-DOM boundaries in between) contains one
+    //   <lightning-base-combobox-item role=""option"" data-value=""N"">
+    // per page. This is distinguished from unrelated comboboxes on the page (like the "Filter: All
+    // Activity" one, or a possible "rows per page" selector with values like 10/25/50) by checking
+    // that its option values are the exact sequence 1, 2, 3, ... N — the one shape a page-jump
+    // control always has and nothing else on the page plausibly would.
+    private const string FindPagerButtonJs = @"
+function findPagerButton(root) {
+  for (const btn of root.querySelectorAll('button[role=""combobox""][aria-haspopup=""listbox""]')) {
+    const listboxId = btn.getAttribute('aria-controls');
+    const listbox = listboxId ? document.getElementById(listboxId) : null;
+    if (!listbox) continue;
+    const values = Array.from(listbox.querySelectorAll('[role=""option""]')).map(o => parseInt((o.getAttribute('data-value') || '').trim(), 10));
+    if (values.length > 1 && values.every((v, i) => v === i + 1)) return btn;
+  }
+  for (const el of root.querySelectorAll('*')) {
+    if (el.shadowRoot) {
+      const found = findPagerButton(el.shadowRoot);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+";
+
+    public static async Task<int> GetBillingHistoryPageCountAsync(WebView2 browser)
+    {
+        var script = FindPagerButtonJs + @"
+const btn = findPagerButton(document);
+if (!btn) return 1;
+const listbox = document.getElementById(btn.getAttribute('aria-controls'));
+return listbox ? listbox.querySelectorAll('[role=""option""]').length : 1;
+";
+        var result = await browser.CoreWebView2.ExecuteScriptAsync(WrapAsFunction(script));
+        return int.TryParse(result, out var count) ? count : 1;
+    }
+
+    public static async Task<bool> GoToBillingHistoryPageAsync(WebView2 browser, int pageNumber)
+    {
+        var openScript = HighlightAndClickJs + FindPagerButtonJs + @"
+const btn = findPagerButton(document);
+if (!btn) return false;
+btn.focus();
+return highlightAndClick(btn).then(() => true);
+";
+        var opened = (await browser.CoreWebView2.ExecuteScriptAsync(WrapAsFunction(openScript))).Trim('"');
+        if (opened != "true")
+            return false;
+
+        await Task.Delay(400);
+
+        var pickScript = HighlightAndClickJs + FindPagerButtonJs + $@"
+const btn = findPagerButton(document);
+if (!btn) return false;
+const listbox = document.getElementById(btn.getAttribute('aria-controls'));
+if (!listbox) return false;
+const opt = Array.from(listbox.querySelectorAll('[role=""option""]')).find(o => (o.getAttribute('data-value') || '').trim() === {JsonSerializer.Serialize(pageNumber.ToString())});
+if (!opt) return false;
+return highlightAndClick(opt).then(() => true);
+";
+        var result = await browser.CoreWebView2.ExecuteScriptAsync(WrapAsFunction(pickScript));
+        return result.Trim('"') == "true";
     }
 
     // Clicking "View Bill PDF" always opens a real new tab (confirmed against the live site) — a

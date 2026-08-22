@@ -16,5 +16,6 @@ public interface IScrapingModule
         WebView2 browser,
         IProgress<string> progress,
         Func<string, Task<string?>> promptForInputAsync,
+        string? accountNumberOverride = null,
         CancellationToken cancellationToken = default);
 }

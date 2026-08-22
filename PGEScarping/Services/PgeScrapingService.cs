@@ -43,6 +43,7 @@ public sealed class PgeScrapingService : IScrapingModule
         WebView2 browser,
         IProgress<string> progress,
         Func<string, Task<string?>> promptForInputAsync,
+        string? accountNumberOverride = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -85,7 +86,9 @@ public sealed class PgeScrapingService : IScrapingModule
 
             progress.Report("Login step complete.");
 
-            var accountNumbers = await DiscoverAccountNumbersAsync(browser);
+            var accountNumbers = string.IsNullOrWhiteSpace(accountNumberOverride)
+                ? await DiscoverAccountNumbersAsync(browser)
+                : [accountNumberOverride.Trim()];
             if (accountNumbers.Count == 0)
             {
                 return new ScrapeResult
@@ -104,15 +107,27 @@ public sealed class PgeScrapingService : IScrapingModule
             foreach (var accountNumber in accountNumbers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                progress.Report($"Account {accountNumber}: switching...");
-                await SwitchToAccountAsync(browser, accountNumber);
 
-                // Build the URL off the browser's current (post-redirect) address rather than the
-                // configured website_url — m.pge.com redirects to myaccount.pge.com, and a relative
-                // path resolved against the original host would point at the wrong domain.
+                // The account search/switch box only actually changes which account's data loads when
+                // used on the Billing and Payment History page itself (confirmed against the live
+                // site) — switching on the dashboard first and then navigating here resets back to the
+                // default account, since the navigation remounts the page. So this navigates first and
+                // does the account switch on this page afterward.
                 var currentUri = new Uri(browser.CoreWebView2.Source);
                 var billingHistoryUrl = new Uri(currentUri, "/myaccount/s/bill-and-payment-history").ToString();
                 await PgeWebViewAutomationHelper.NavigateAndWaitAsync(browser, billingHistoryUrl);
+
+                progress.Report($"Account {accountNumber}: switching...");
+                await WaitForAccountSearchBoxAsync(browser);
+                var switched = await SwitchToAccountAsync(browser, accountNumber);
+                if (!switched && !string.IsNullOrWhiteSpace(accountNumberOverride))
+                {
+                    return new ScrapeResult
+                    {
+                        Success = false,
+                        Message = $"Account number \"{accountNumber}\" was not found on this login. Please double-check it and try again."
+                    };
+                }
 
                 var pdfLinks = await CollectBillPdfLinksAsync(browser);
                 progress.Report($"Account {accountNumber}: found {pdfLinks.Count} bill(s) in history.");
@@ -136,16 +151,21 @@ public sealed class PgeScrapingService : IScrapingModule
 
             Directory.CreateDirectory(_options.OutputFolder);
             var outputFilePath = Path.Combine(_options.OutputFolder, "PGE_Billing_History.xlsx");
-            ExcelExportHelper.WriteWorkbook(outputFilePath, allBills);
 
-            progress.Report($"Done. {allBills.Count} bill(s) written to {outputFilePath}.");
+            // Merge into whatever's already in the workbook rather than overwriting it — running the
+            // scraper again for just one account (via the account-number override) should add that
+            // account's bills alongside every other account's data already collected in past runs.
+            var mergedBills = ExcelExportHelper.MergeWithExisting(outputFilePath, allBills);
+            ExcelExportHelper.WriteWorkbook(outputFilePath, mergedBills);
+
+            progress.Report($"Done. {allBills.Count} bill(s) scraped this run, {mergedBills.Count} total in {outputFilePath}.");
 
             return new ScrapeResult
             {
                 Success = true,
-                Message = $"{allBills.Count} bill(s) exported across {accountNumbers.Count} account(s).",
+                Message = $"{allBills.Count} bill(s) exported across {accountNumbers.Count} account(s) ({mergedBills.Count} total rows in the workbook).",
                 OutputFilePath = outputFilePath,
-                RecordCount = allBills.Count
+                RecordCount = mergedBills.Count
             };
         }
         catch (Exception ex)
@@ -210,15 +230,85 @@ function findAccountBox(root) {
 }
 ";
 
+    // Right after login the dashboard shows a "Your personal dashboard is almost ready!" loading
+    // screen for a few seconds before the real page (with the account search box) renders — trying to
+    // switch accounts during that window finds no search box at all and reports the account as "not
+    // found" even though it's valid. This polls until the box actually exists (any value, including
+    // still-empty) before the account-switching logic ever runs.
+    private async Task WaitForAccountSearchBoxAsync(WebView2 browser, int timeoutMs = 30000, int pollIntervalMs = 1000)
+    {
+        var script = AccountSearchBoxScript + "return !!findAccountBox(document);";
+        var elapsed = 0;
+        while (elapsed < timeoutMs)
+        {
+            var result = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, script);
+            if (result.Trim('"') == "true")
+                return;
+
+            await Task.Delay(pollIntervalMs);
+            elapsed += pollIntervalMs;
+        }
+
+        _logFile.Append("WaitForAccountSearchBoxAsync: account search box never appeared within the timeout.");
+    }
+
+    // The account search box is a combobox: clicking/focusing it opens a listbox of every linked
+    // account, each rendered as an option whose text contains the account number. This looks for
+    // that listbox first (covering logins with more than one account) and only falls back to
+    // whatever account is currently loaded if no such listbox ever appears (a single-account login,
+    // or a page structure change).
+    private const string FindAccountOptionsJs = @"
+function findAccountOptions(root, results) {
+  root.querySelectorAll('[role=""option""], li, .slds-listbox__option').forEach(el => {
+    const t = (el.innerText || el.textContent || '').trim();
+    const m = t.match(/\d{5,}-\d/);
+    if (m) results.push(m[0]);
+  });
+  root.querySelectorAll('*').forEach(el => {
+    if (el.shadowRoot) findAccountOptions(el.shadowRoot, results);
+  });
+}
+";
+
     private async Task<List<string>> DiscoverAccountNumbersAsync(WebView2 browser)
     {
-        var script = AccountSearchBoxScript + "const el = findAccountBox(document); return el ? el.value : null;";
+        var openDropdownScript = AccountSearchBoxScript + @"
+const el = findAccountBox(document);
+if (!el) return false;
+el.focus();
+el.dispatchEvent(new Event('focus', { bubbles: true }));
+el.click();
+return true;
+";
+        var opened = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, openDropdownScript);
+        if (opened.Trim('"') == "true")
+        {
+            await Task.Delay(1200);
+
+            var collectScript = FindAccountOptionsJs + @"
+const results = [];
+findAccountOptions(document, results);
+return JSON.stringify([...new Set(results)]);
+";
+            var json = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, collectScript);
+            var raw = JsonSerializer.Deserialize<string>(json) ?? json;
+            var options = JsonSerializer.Deserialize<List<string>>(raw) ?? [];
+            if (options.Count > 0)
+            {
+                _logFile.Append($"DiscoverAccountNumbersAsync: found {options.Count} account(s) via dropdown: {string.Join(", ", options)}");
+                return options;
+            }
+        }
+
+        _logFile.Append("DiscoverAccountNumbersAsync: no account dropdown/listbox found, falling back to the single currently-loaded account.");
+
+        var currentValueScript = AccountSearchBoxScript + "const el = findAccountBox(document); return el ? el.value : null;";
 
         // The dashboard's data (including the account number) populates a moment after the page
         // itself finishes navigating, via an async fetch inside the SPA — poll instead of checking once.
         for (var attempt = 0; attempt < 15; attempt++)
         {
-            var json = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, script);
+            var json = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, currentValueScript);
             var current = JsonSerializer.Deserialize<string?>(json);
             if (!string.IsNullOrWhiteSpace(current))
                 return [current];
@@ -230,19 +320,128 @@ function findAccountBox(root) {
         return [];
     }
 
-    private static async Task SwitchToAccountAsync(WebView2 browser, string accountNumber)
+    // The account listbox markup is confirmed via live devtools inspection:
+    //   <input ... aria-controls=""account-listbox-524"">
+    //   <div id="account-listbox-524" role="listbox">
+    //     <li role="option" id="acc-0335152071-524" data-id="0335152071">
+    //       <span class="acc-name" title="0335152071-7">0335152071-7</span>
+    //     </li>
+    //   </div>
+    // Critically, the <li>'s own id/data-id only hold the digits BEFORE the account's trailing "-N"
+    // check digit (e.g. "0335152071", not "0335152071-7") — an id-contains-accountNumber check can
+    // never match because of that missing suffix. The .acc-name span's title/text does hold the
+    // complete account number, so matching is done against that instead.
+    //
+    // This searches the whole document rather than scoping through the input's aria-controls id —
+    // a real run showed the row fully rendered and visible in the dropdown while aria-controls never
+    // got set on the input (the synthetic value+input-event trigger apparently doesn't reproduce every
+    // side effect of real typing), so relying on that attribute silently never finds anything.
+    //
+    // A real run also showed window.frames.length === 2 on this page while WebView2's own
+    // FrameCreated-based tracking (used to run script in a specific child frame) never actually
+    // captured either of them — and separately turned out fragile (a stale frame from the previous
+    // page briefly lingered and returned a non-JSON result, crashing a diagnostic). Recursing into
+    // same-origin iframes directly via contentDocument, all within one script call in the main frame,
+    // sidesteps that machinery entirely; a cross-origin iframe would throw on contentDocument access,
+    // which is caught and skipped. This first attempt at that recursion still came back empty, though
+    // — because it only crossed iframe boundaries and not shadow-DOM ones, and the rest of this file's
+    // shadow-piercing helpers (AccountSearchBoxScript, FindInShadowJs) prove this Salesforce Lightning
+    // site nests plenty of real shadow roots too. The search below crosses both at every level.
+    private const string FindAccountRowJs = @"
+function findAccountRow(accountNumber) {
+  function search(root) {
+    const nameSpan = Array.from(root.querySelectorAll('.acc-name')).find(s => (s.getAttribute('title') || s.textContent || '').trim() === accountNumber);
+    if (nameSpan) return nameSpan.closest('[role=""option""]') || nameSpan.parentElement;
+
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) {
+        const found = search(el.shadowRoot);
+        if (found) return found;
+      }
+    }
+
+    for (const iframe of root.querySelectorAll('iframe')) {
+      try {
+        const innerDoc = iframe.contentDocument;
+        if (innerDoc) {
+          const found = search(innerDoc);
+          if (found) return found;
+        }
+      } catch (e) { /* cross-origin iframe — inaccessible, skip it */ }
+    }
+
+    return null;
+  }
+  return search(document);
+}
+";
+
+    private async Task<bool> SwitchToAccountAsync(WebView2 browser, string accountNumber)
     {
-        var script = AccountSearchBoxScript + $@"
+        var setValueScript = AccountSearchBoxScript + $@"
 const el = findAccountBox(document);
 if (!el) return false;
 const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 setter.call(el, {JsonSerializer.Serialize(accountNumber)});
 el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-el.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
 return true;
 ";
-        await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, script);
-        await Task.Delay(1500);
+        var found = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, setValueScript);
+        if (found.Trim('"') != "true")
+        {
+            _logFile.Append($"SwitchToAccountAsync: could not find the account search box while switching to {accountNumber}.");
+            return false;
+        }
+
+        // The dropdown's listbox is only attached to the DOM once the framework finishes its (async)
+        // account search — a single fixed delay before looking for it caused intermittent failures
+        // when that search happened to take longer, so this polls for the matching row to actually
+        // exist instead of guessing a fixed wait.
+        var findRowScript = FindAccountRowJs + $@"
+const row = findAccountRow({JsonSerializer.Serialize(accountNumber)});
+return row ? 'found' : 'not-found';
+";
+
+        var pollResult = "not-found";
+        const int maxAttempts = 16;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            pollResult = (await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, findRowScript)).Trim('"');
+            if (pollResult == "found")
+                break;
+
+            await Task.Delay(500);
+        }
+
+        if (pollResult != "found")
+        {
+            _logFile.Append($"SwitchToAccountAsync: the account row for {accountNumber} never appeared (including inside same-origin iframes) after {maxAttempts * 500}ms — treating this as \"account not found\".");
+            return false;
+        }
+
+        var clickScript = PgeWebViewAutomationHelper.HighlightAndClickJs + FindAccountRowJs + $@"
+const row = findAccountRow({JsonSerializer.Serialize(accountNumber)});
+if (!row) return 'no-match';
+return highlightAndClick(row).then(() => 'clicked:' + (row.id || ''));
+";
+        var clickResult = (await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, clickScript)).Trim('"');
+        if (clickResult == "no-match")
+        {
+            _logFile.Append($"SwitchToAccountAsync: no-match — failed to click the account row for {accountNumber} even though it was found moments earlier.");
+            return false;
+        }
+
+        // A result other than the expected "clicked:<id>" string (e.g. "{}") isn't necessarily a
+        // failure — a real run showed this happening right after a successful click, because the
+        // click itself kicked off a page transition that tore down the script's execution context
+        // before its .then() could finish reporting back. Only the explicit "no-match" above (the
+        // row genuinely wasn't there to click) is treated as a real failure.
+        _logFile.Append($"SwitchToAccountAsync: click script returned '{clickResult}' for account {accountNumber} (treated as success unless it was 'no-match').");
+
+        // Give the page a moment to actually reload the billing history for the newly-selected
+        // account before the caller starts collecting rows from it.
+        await Task.Delay(2500);
+        return true;
     }
 
     private const string CollectBillPdfLinksScript = PgeWebViewAutomationHelper.FindInShadowJs + @"
@@ -262,6 +461,52 @@ return JSON.stringify(results);
 
     private async Task<List<(string PdfUrl, string RowLabel)>> CollectBillPdfLinksAsync(WebView2 browser)
     {
+        var pageCount = await PgeWebViewAutomationHelper.GetBillingHistoryPageCountAsync(browser);
+        _logFile.Append($"CollectBillPdfLinksAsync: pager reports {pageCount} page(s) of billing history.");
+
+        var all = new List<(string PdfUrl, string RowLabel)>();
+        var seenRowLabels = new HashSet<string>();
+
+        for (var page = 1; page <= pageCount; page++)
+        {
+            if (page > 1)
+            {
+                var moved = await PgeWebViewAutomationHelper.GoToBillingHistoryPageAsync(browser, page);
+                _logFile.Append($"CollectBillPdfLinksAsync: navigating to page {page} of {pageCount} — {(moved ? "pager control found" : "pager control NOT found")}.");
+                if (!moved)
+                    break;
+
+                await Task.Delay(1500);
+            }
+
+            var items = await CollectCurrentPageBillPdfLinksAsync(browser);
+            _logFile.Append($"CollectBillPdfLinksAsync: page {page} of {pageCount} — {items.Count} 'View Bill PDF' row(s) found: {string.Join(" | ", items.Select(i => i.RowLabel))}");
+
+            var newOnThisPage = 0;
+            foreach (var item in items)
+            {
+                if (seenRowLabels.Add(item.RowLabel))
+                {
+                    all.Add(item);
+                    newOnThisPage++;
+                }
+            }
+
+            // If a page produced zero rows we haven't already seen, either the pager didn't actually
+            // move (same page re-scraped) or we've genuinely run past the real content — either way,
+            // continuing to "advance" further pages would just keep re-scraping the same data.
+            if (newOnThisPage == 0 && page > 1)
+            {
+                _logFile.Append($"CollectBillPdfLinksAsync: page {page} produced no new rows, stopping pagination early.");
+                break;
+            }
+        }
+
+        return all;
+    }
+
+    private async Task<List<(string PdfUrl, string RowLabel)>> CollectCurrentPageBillPdfLinksAsync(WebView2 browser)
+    {
         // Same reasoning as DiscoverAccountNumbersAsync: the billing history table populates
         // asynchronously after navigation, so a one-shot read can catch it before any rows exist.
         for (var attempt = 0; attempt < 15; attempt++)
@@ -275,7 +520,7 @@ return JSON.stringify(results);
             await Task.Delay(1000);
         }
 
-        _logFile.Append("CollectBillPdfLinksAsync: no 'View Bill PDF' rows found after 15 attempts.");
+        _logFile.Append("CollectCurrentPageBillPdfLinksAsync: no 'View Bill PDF' rows found after 15 attempts.");
         return [];
     }
 
