@@ -34,13 +34,12 @@ public static class PdfBillParserHelper
             @"(?:Off[- ]?Peak(?:\s+(?:Summer|Winter))?|Peak(?:\s+(?:Summer|Winter))?)\s+[\d.,]+\s*kWh\s*@\s*\$?[\d.]+\s*\$?(-?[\d,]+\.\d{2})");
 
         // Credits: PG&E's Generation Credit plus Ava's PCIA Credit, Franchise Fee Surcharge Credit,
-        // and Bright Choice. Stored on the bill as negative amounts; summed as a positive
-        // "amount credited back" figure.
-        var credits = SumAllMatches(text, @"Generation Credit\s+(-?[\d,]+\.\d{2})")
+        // and Bright Choice. The bill itself shows these as negative amounts (e.g. "Generation Credit
+        // -357.25"), and the Excel output keeps that same negative sign rather than flipping it positive.
+        record.CreditReceived = SumAllMatches(text, @"Generation Credit\s+(-?[\d,]+\.\d{2})")
             + SumAllMatches(text, @"Power Charge Indifference Adjustment Credit\s+(-?[\d,]+\.\d{2})")
             + SumAllMatches(text, @"Franchise Fee Surcharge Credit\s+(-?[\d,]+\.\d{2})")
             + SumAllMatches(text, @"Bright Choice\s+(-?[\d,]+\.\d{2})");
-        record.CreditReceived = Math.Abs(credits);
 
         // Taxes: PG&E's utility users' tax (name varies by city) plus Ava's local utility tax and
         // energy commission tax. Each tax line is followed by a "(6.000%)" rate parenthetical before

@@ -129,8 +129,14 @@ public sealed class PgeScrapingService : IScrapingModule
                     };
                 }
 
-                var pdfLinks = await CollectBillPdfLinksAsync(browser);
-                progress.Report($"Account {accountNumber}: found {pdfLinks.Count} bill(s) in history.");
+                // Only the current/latest bill for this account is wanted — the billing history table
+                // lists rows newest-first, so the first "View Bill PDF" row on page 1 is that bill. No
+                // pagination needed.
+                var currentPageItems = await CollectCurrentPageBillPdfLinksAsync(browser);
+                var pdfLinks = currentPageItems.Count > 0
+                    ? new List<(string PdfUrl, string RowLabel)> { currentPageItems[0] }
+                    : [];
+                progress.Report($"Account {accountNumber}: found {pdfLinks.Count} bill(s) to download.");
 
                 foreach (var (_, rowLabel) in pdfLinks)
                 {
@@ -150,22 +156,21 @@ public sealed class PgeScrapingService : IScrapingModule
             }
 
             Directory.CreateDirectory(_options.OutputFolder);
-            var outputFilePath = Path.Combine(_options.OutputFolder, "PGE_Billing_History.xlsx");
 
-            // Merge into whatever's already in the workbook rather than overwriting it — running the
-            // scraper again for just one account (via the account-number override) should add that
-            // account's bills alongside every other account's data already collected in past runs.
-            var mergedBills = ExcelExportHelper.MergeWithExisting(outputFilePath, allBills);
-            ExcelExportHelper.WriteWorkbook(outputFilePath, mergedBills);
+            // A fresh, uniquely-named file per run (instead of merging into one shared workbook) so
+            // each run's export stands on its own.
+            var outputFileName = $"PGE_Billing_History_{DateTime.Now:yyyy-MM-dd_HHmmss}.xlsx";
+            var outputFilePath = Path.Combine(_options.OutputFolder, outputFileName);
+            ExcelExportHelper.WriteWorkbook(outputFilePath, allBills);
 
-            progress.Report($"Done. {allBills.Count} bill(s) scraped this run, {mergedBills.Count} total in {outputFilePath}.");
+            progress.Report($"Done. {allBills.Count} bill(s) scraped this run, saved to {outputFilePath}.");
 
             return new ScrapeResult
             {
                 Success = true,
-                Message = $"{allBills.Count} bill(s) exported across {accountNumbers.Count} account(s) ({mergedBills.Count} total rows in the workbook).",
+                Message = $"{allBills.Count} bill(s) exported across {accountNumbers.Count} account(s) to {outputFileName}.",
                 OutputFilePath = outputFilePath,
-                RecordCount = mergedBills.Count
+                RecordCount = allBills.Count
             };
         }
         catch (Exception ex)
