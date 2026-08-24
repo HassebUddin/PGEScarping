@@ -7,3 +7,4 @@ public sealed class ScrapeResult
     public string OutputFilePath { get; init; } = "";
     public int RecordCount { get; init; }
 }
+ 
