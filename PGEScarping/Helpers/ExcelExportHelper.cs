@@ -9,7 +9,7 @@ public static class ExcelExportHelper
     [
         "Account Number", "Account Name", "Statement Date", "Due Date",
         "Total Bill Amount", "Electricity Charges", "Credit Received",
-        "Total Tax Amount", "Other Charges", "Total Usage (kWh)", "Bill PDF File"
+        "Total Tax Amount", "Other Charges", "Gas Charges", "Total Usage (kWh)", "Bill PDF File"
     ];
 
     // Reads back a previously-written workbook so a new run can merge into it instead of overwriting
@@ -35,8 +35,9 @@ public static class ExcelExportHelper
                 CreditReceived = ws.Cell(row, 7).GetValue<decimal>(),
                 TotalTaxAmount = ws.Cell(row, 8).GetValue<decimal>(),
                 OtherCharges = ws.Cell(row, 9).GetValue<decimal>(),
-                TotalUsageKwh = ws.Cell(row, 10).GetValue<decimal>(),
-                BillPdfFileName = ws.Cell(row, 11).GetString()
+                GasCharges = ws.Cell(row, 10).GetValue<decimal>(),
+                TotalUsageKwh = ws.Cell(row, 11).GetValue<decimal>(),
+                BillPdfFileName = ws.Cell(row, 12).GetString()
             });
             row++;
         }
@@ -90,8 +91,9 @@ public static class ExcelExportHelper
             ws.Cell(row, 7).Value = bill.CreditReceived;
             ws.Cell(row, 8).Value = bill.TotalTaxAmount;
             ws.Cell(row, 9).Value = bill.OtherCharges;
-            ws.Cell(row, 10).Value = bill.TotalUsageKwh;
-            ws.Cell(row, 11).Value = bill.BillPdfFileName;
+            ws.Cell(row, 10).Value = bill.GasCharges;
+            ws.Cell(row, 11).Value = bill.TotalUsageKwh;
+            ws.Cell(row, 12).Value = bill.BillPdfFileName;
 
             if (r % 2 == 1)
                 ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#F8FAFC");

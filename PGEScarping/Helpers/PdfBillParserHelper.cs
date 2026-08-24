@@ -19,27 +19,42 @@ public static class PdfBillParserHelper
             StatementDate = MatchDate(text, @"Statement Date:?\s*(\d{2}/\d{2}/\d{4})"),
             DueDate = MatchDate(text, @"Due Date:?\s*(\d{2}/\d{2}/\d{4})"),
             TotalBillAmount = MatchAmount(text, @"Total Amount Due[^$]*\$\s*(-?[\d,]+\.\d{2})"),
-            TotalUsageKwh = MatchAmount(text, @"Total Usage\s+([\d,]+\.\d+)\s*kWh")
+            TotalUsageKwh = MatchAmount(text, @"Total Usage\s+([\d,]+\.\d+)\s*kWh"),
+            // Only some accounts have gas service — "Total Gas Charges" simply won't be present on an
+            // electric-only bill, and MatchAmount already returns 0 when a pattern doesn't match.
+            GasCharges = MatchAmount(text, @"Total Gas Charges\s+\$?(-?[\d,]+\.\d{2})")
         };
 
-        // Electricity usage charges: PG&E ("Peak"/"Off Peak") and Ava ("Peak Summer"/"Off-Peak Winter"
-        // etc.) all follow the same "<label> <kWh> @$<rate> <amount>" shape — a single pattern covers
-        // both providers and every season variant, and a bill can list more than one billing period
-        // (e.g. a mid-cycle rate change), so every matching line is summed rather than just the first.
+        // Electricity usage charges: PG&E ("Peak"/"Off Peak") and various CCAs ("Peak Summer"/
+        // "Off-Peak Winter", or CleanPowerSF's "Generation - On Peak - Summer" with dashes around both
+        // the season word and — for "On Peak"/"Part Peak" — around "Peak" itself) all follow the same
+        // "<label> <kWh> @$<rate> <amount>" shape. The match only needs to find the bare "Peak"/"Off
+        // Peak" substring — any "On "/"Part "/"Generation - " prefix before it is simply left
+        // unconsumed — so the optional season suffix is the only part that needs to tolerate the
+        // dashes CleanPowerSF wraps it in ("- Summer" instead of just " Summer"). A bill can also list
+        // more than one billing period for the same tier (e.g. a mid-cycle rate change), so every
+        // matching line is summed rather than just the first.
         // Note: PdfPig's word-level extraction can split "@" and "$<rate>" into separate words with a
         // space between them (positioning-dependent), so "@\s*\$?" is used everywhere instead of a
         // literal "@$" — a real PDF sample confirmed a bare "@\$" match fails and silently zeroes out
         // every downstream sum.
         record.ElectricityCharges = SumAllMatches(text,
-            @"(?:Off[- ]?Peak(?:\s+(?:Summer|Winter))?|Peak(?:\s+(?:Summer|Winter))?)\s+[\d.,]+\s*kWh\s*@\s*\$?[\d.]+\s*\$?(-?[\d,]+\.\d{2})");
+            @"(?:Off[- ]?Peak(?:\s*-?\s*(?:Summer|Winter))?|Peak(?:\s*-?\s*(?:Summer|Winter))?)\s+[\d.,]+\s*kWh\s*@\s*\$?[\d.]+\s*\$?(-?[\d,]+\.\d{2})");
 
-        // Credits: PG&E's Generation Credit plus Ava's PCIA Credit, Franchise Fee Surcharge Credit,
-        // and Bright Choice. The bill itself shows these as negative amounts (e.g. "Generation Credit
-        // -357.25"), and the Excel output keeps that same negative sign rather than flipping it positive.
+        // Credits: PG&E's Generation Credit and Baseline Credit, plus Ava/MCE's PCIA Credit, Franchise
+        // Fee Surcharge Credit, Bright Choice, and MCE Cost Relief Credit. Baseline Credit and MCE Cost
+        // Relief Credit are per-kWh lines like the Electricity Charges ones (e.g. "Baseline Credit
+        // 465.000000 kWh @-$0.08140 -37.85" — note the rate itself can carry its own "-"), so they need
+        // the same optional "<kWh> kWh @$<rate>" clause before the real dollar amount, otherwise the
+        // kWh figure itself would get captured instead of the trailing credit amount.
+        // The bill itself shows these as negative amounts (e.g. "Generation Credit -357.25"), and the
+        // Excel output keeps that same negative sign rather than flipping it positive.
         record.CreditReceived = SumAllMatches(text, @"Generation Credit\s+(-?[\d,]+\.\d{2})")
+            + SumAllMatches(text, @"Baseline Credit(?:\s+[\d.,]+\s*kWh\s*@\s*-?\$?-?[\d.]+)?\s+\$?(-?[\d,]+\.\d{2})")
             + SumAllMatches(text, @"Power Charge Indifference Adjustment Credit\s+(-?[\d,]+\.\d{2})")
             + SumAllMatches(text, @"Franchise Fee Surcharge Credit\s+(-?[\d,]+\.\d{2})")
-            + SumAllMatches(text, @"Bright Choice\s+(-?[\d,]+\.\d{2})");
+            + SumAllMatches(text, @"Bright Choice\s+(-?[\d,]+\.\d{2})")
+            + SumAllMatches(text, @"MCE Cost Relief Credit(?:\s+[\d.,]+\s*kWh\s*@\s*\$?[\d.]+)?\s+\$?(-?[\d,]+\.\d{2})");
 
         // Taxes: PG&E's utility users' tax (name varies by city) plus Ava's local utility tax and
         // energy commission tax. Each tax line is followed by a "(6.000%)" rate parenthetical before
@@ -52,16 +67,31 @@ public static class PdfBillParserHelper
         // consistent with ElectricityCharges/OtherCharges only ever matching electric line items.
         var gasSectionIndex = text.IndexOf("Details of Gas Charges", StringComparison.OrdinalIgnoreCase);
         var electricPortion = gasSectionIndex >= 0 ? text[..gasSectionIndex] : text;
-        record.TotalTaxAmount = SumAllMatches(electricPortion, @"Stockton Utility Users.{0,2}Tax(?:\s*\(\s*[\d.]+\s*%\s*\))?\s+\$?(-?[\d,]+\.\d{2})")
+
+        // The city name in "<City> Utility Users' Tax" varies per account (Stockton, Fairfield,
+        // San Francisco, etc.) — matched generically instead of hardcoding one city, so any account's
+        // city is picked up automatically. "Local" is excluded from the city-name slot so this can
+        // never re-match (and double-count) the separate "Local Utility Users Tax" line matched right
+        // below it. "Energy Commission Tax" and "Energy Commission Surcharge" are the same line item
+        // worded differently by different CCAs, matched as one alternation. A city can also levy its
+        // own separate tax surcharge (e.g. San Francisco's "SF Prop C Tax Surcharge") on top of its
+        // Utility Users' Tax — that's matched by its literal "Tax Surcharge" ending, a phrase specific
+        // enough not to collide with any of the other tax patterns here.
+        record.TotalTaxAmount = SumAllMatches(electricPortion, @"\b(?!Local\b)[A-Za-z]+\s+Utility Users.{0,2}Tax(?:\s*\(\s*[\d.]+\s*%\s*\))?\s+\$?(-?[\d,]+\.\d{2})")
             + SumAllMatches(electricPortion, @"Local Utility Users Tax(?:\s*\(\s*[\d.]+\s*%\s*\))?\s+\$?(-?[\d,]+\.\d{2})")
-            + SumAllMatches(electricPortion, @"Energy Commission Tax\s+(-?[\d,]+\.\d{2})");
+            + SumAllMatches(electricPortion, @"Energy Commission (?:Tax|Surcharge)\s+(-?[\d,]+\.\d{2})")
+            + SumAllMatches(electricPortion, @"[A-Za-z][A-Za-z'\-\s]*?Tax Surcharge\s+(-?[\d,]+\.\d{2})");
 
         // Everything else: the flat per-period service charge (renamed from "Customer Charge" to
         // "Base Services Charge" starting March 2026 — both forms are matched) plus PG&E's non-credit
         // Power Charge Indifference Adjustment and Franchise Fee Surcharge.
-        record.OtherCharges = SumAllMatches(text, @"(?:Customer Charge|Base Services Charge)\s+\d+\s*days\s*@\s*\$?[\d.]+\s*\$?(-?[\d,]+\.\d{2})")
-            + SumAllMatches(text, @"Power Charge Indifference Adjustment(?!\s+Credit)\s+(-?[\d,]+\.\d{2})")
-            + SumAllMatches(text, @"Franchise Fee Surcharge(?!\s+Credit)\s+(-?[\d,]+\.\d{2})");
+        // Scoped to electricPortion (same as TotalTaxAmount) rather than the full text — the Gas
+        // Charges section has its own "Customer Charge <N> days @$<rate> $<amount>" line in the exact
+        // same shape as the electric one, and that gas amount is already captured separately in
+        // GasCharges; without this scoping it would get double-counted into OtherCharges too.
+        record.OtherCharges = SumAllMatches(electricPortion, @"(?:Customer Charge|Base Services Charge)\s+\d+\s*days\s*@\s*\$?[\d.]+\s*\$?(-?[\d,]+\.\d{2})")
+            + SumAllMatches(electricPortion, @"Power Charge Indifference Adjustment(?!\s+Credit)\s+(-?[\d,]+\.\d{2})")
+            + SumAllMatches(electricPortion, @"Franchise Fee Surcharge(?!\s+Credit)\s+(-?[\d,]+\.\d{2})");
 
         return record;
     }

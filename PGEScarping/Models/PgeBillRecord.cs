@@ -11,6 +11,7 @@ public class PgeBillRecord
     public decimal CreditReceived { get; set; }
     public decimal TotalTaxAmount { get; set; }
     public decimal OtherCharges { get; set; }
+    public decimal GasCharges { get; set; }
     public decimal TotalUsageKwh { get; set; }
     public string BillPdfFileName { get; set; } = "";
 }
