@@ -48,43 +48,57 @@ public sealed class PgeScrapingService : IScrapingModule
     {
         try
         {
-            var website = await _scrapingWebsiteRepository.GetActiveBySourceTypeIdAsync((int)SourceType);
-            if (website is null)
-                return new ScrapeResult { Success = false, Message = "No active PG&E website credentials found in the database." };
+            // The same WebView2 control (and its session cookies) is reused across runs within one
+            // app session — if a previous run already got us logged in and sitting on the Billing and
+            // Payment History page, re-navigating to the site's home page and re-running the whole
+            // login/MFA flow is pure wasted time (and re-triggers a fresh MFA prompt PG&E doesn't even
+            // need again). Skip straight to the account-processing loop whenever we're already there.
+            var alreadyOnBillingHistoryPage = browser.CoreWebView2?.Source?.Contains("/bill-and-payment-history", StringComparison.OrdinalIgnoreCase) == true;
 
-            progress.Report($"Opening {website.website_url} ...");
-            await PgeWebViewAutomationHelper.NavigateAndWaitAsync(browser, website.website_url);
-
-            var loginFormAppeared = await PgeWebViewAutomationHelper.WaitForShadowElementAsync(browser, "input[name='username']", timeoutMs: 20000);
-            if (loginFormAppeared)
+            if (alreadyOnBillingHistoryPage)
             {
-                // The OneTrust cookie banner loads asynchronously after the page itself; only try to
-                // dismiss it once the rest of the page (the login form) has actually rendered.
-                await PgeWebViewAutomationHelper.ClickInShadowAsync(browser, "#onetrust-accept-btn-handler");
-                await Task.Delay(1000, cancellationToken);
-
-                progress.Report($"Logging in as {website.username} ...");
-                var usernameFilled = await PgeWebViewAutomationHelper.SetShadowInputValueAsync(browser, "input[name='username']", website.username);
-                var passwordFilled = await PgeWebViewAutomationHelper.SetShadowInputValueAsync(browser, "input[name='password']", website.password);
-                var usernameValueStuck = await PgeWebViewAutomationHelper.GetShadowInputValueAsync(browser, "input[name='username']") == website.username;
-                if (!usernameFilled || !passwordFilled || !usernameValueStuck)
-                    return new ScrapeResult { Success = false, Message = "Could not fill the PG&E login form — the site's page structure may have changed." };
-
-                var signInClicked = await PgeWebViewAutomationHelper.ClickInShadowAsync(browser, "button.PrimarySignInButton");
-                if (!signInClicked)
-                    return new ScrapeResult { Success = false, Message = "Could not find the Sign In button on the PG&E login page." };
-
-                await Task.Delay(5000, cancellationToken);
+                progress.Report("Already logged in and on the Billing and Payment History page — skipping login.");
             }
             else
             {
-                progress.Report("Login form didn't appear — the session may already be signed in.");
+                var website = await _scrapingWebsiteRepository.GetActiveBySourceTypeIdAsync((int)SourceType);
+                if (website is null)
+                    return new ScrapeResult { Success = false, Message = "No active PG&E website credentials found in the database." };
+
+                progress.Report($"Opening {website.website_url} ...");
+                await PgeWebViewAutomationHelper.NavigateAndWaitAsync(browser, website.website_url);
+
+                var loginFormAppeared = await PgeWebViewAutomationHelper.WaitForShadowElementAsync(browser, "input[name='username']", timeoutMs: 20000);
+                if (loginFormAppeared)
+                {
+                    // The OneTrust cookie banner loads asynchronously after the page itself; only try to
+                    // dismiss it once the rest of the page (the login form) has actually rendered.
+                    await PgeWebViewAutomationHelper.ClickInShadowAsync(browser, "#onetrust-accept-btn-handler");
+                    await Task.Delay(1000, cancellationToken);
+
+                    progress.Report($"Logging in as {website.username} ...");
+                    var usernameFilled = await PgeWebViewAutomationHelper.SetShadowInputValueAsync(browser, "input[name='username']", website.username);
+                    var passwordFilled = await PgeWebViewAutomationHelper.SetShadowInputValueAsync(browser, "input[name='password']", website.password);
+                    var usernameValueStuck = await PgeWebViewAutomationHelper.GetShadowInputValueAsync(browser, "input[name='username']") == website.username;
+                    if (!usernameFilled || !passwordFilled || !usernameValueStuck)
+                        return new ScrapeResult { Success = false, Message = "Could not fill the PG&E login form — the site's page structure may have changed." };
+
+                    var signInClicked = await PgeWebViewAutomationHelper.ClickInShadowAsync(browser, "button.PrimarySignInButton");
+                    if (!signInClicked)
+                        return new ScrapeResult { Success = false, Message = "Could not find the Sign In button on the PG&E login page." };
+
+                    await Task.Delay(5000, cancellationToken);
+                }
+                else
+                {
+                    progress.Report("Login form didn't appear — the session may already be signed in.");
+                }
+
+                if (!await HandleTwoFactorIfPresentAsync(browser, progress, promptForInputAsync, cancellationToken))
+                    return new ScrapeResult { Success = false, Message = "Could not complete the PG&E security code verification." };
+
+                progress.Report("Login step complete.");
             }
-
-            if (!await HandleTwoFactorIfPresentAsync(browser, progress, promptForInputAsync, cancellationToken))
-                return new ScrapeResult { Success = false, Message = "Could not complete the PG&E security code verification." };
-
-            progress.Report("Login step complete.");
 
             var accountNumbers = string.IsNullOrWhiteSpace(accountNumberOverride)
                 ? await DiscoverAccountNumbersAsync(browser)
@@ -108,50 +122,66 @@ public sealed class PgeScrapingService : IScrapingModule
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // The account search/switch box only actually changes which account's data loads when
-                // used on the Billing and Payment History page itself (confirmed against the live
-                // site) — switching on the dashboard first and then navigating here resets back to the
-                // default account, since the navigation remounts the page. So this navigates first and
-                // does the account switch on this page afterward.
-                var currentUri = new Uri(browser.CoreWebView2.Source);
-                var billingHistoryUrl = new Uri(currentUri, "/myaccount/s/bill-and-payment-history").ToString();
-                await PgeWebViewAutomationHelper.NavigateAndWaitAsync(browser, billingHistoryUrl);
-
-                progress.Report($"Account {accountNumber}: switching...");
-                await WaitForAccountSearchBoxAsync(browser);
-                var switched = await SwitchToAccountAsync(browser, accountNumber);
-                if (!switched && !string.IsNullOrWhiteSpace(accountNumberOverride))
+                // Each account is isolated in its own try/catch: a single account timing out or
+                // erroring out (a slow PDF generation, an unexpected page state, etc.) must not abort
+                // the whole run and lose every other account's already-collected/still-pending data —
+                // it's logged and skipped so the loop moves on to the next account instead.
+                try
                 {
-                    return new ScrapeResult
+                    // The account search/switch box only actually changes which account's data loads
+                    // when used on the Billing and Payment History page itself (confirmed against the
+                    // live site) — switching on the dashboard first and then navigating here resets
+                    // back to the default account, since the navigation remounts the page. So this
+                    // navigates first and does the account switch on this page afterward. Already being
+                    // on that exact page (e.g. right after skipping login on a re-run) still re-navigates
+                    // to it — a fresh load of the same page — since a reliable reload is cheap and it
+                    // guarantees a known-clean starting state before the account switch below.
+                    var currentUri = new Uri(browser.CoreWebView2!.Source);
+                    var billingHistoryUrl = new Uri(currentUri, "/myaccount/s/bill-and-payment-history").ToString();
+                    await PgeWebViewAutomationHelper.NavigateAndWaitAsync(browser, billingHistoryUrl);
+
+                    progress.Report($"Account {accountNumber}: switching...");
+                    await WaitForAccountSearchBoxAsync(browser);
+                    var switched = await SwitchToAccountAsync(browser, accountNumber);
+                    if (!switched && !string.IsNullOrWhiteSpace(accountNumberOverride))
                     {
-                        Success = false,
-                        Message = $"Account number \"{accountNumber}\" was not found on this login. Please double-check it and try again."
-                    };
+                        return new ScrapeResult
+                        {
+                            Success = false,
+                            Message = $"Account number \"{accountNumber}\" was not found on this login. Please double-check it and try again."
+                        };
+                    }
+
+                    // Only the current/latest bill for this account is wanted — the billing history
+                    // table lists rows newest-first, so the first "View Bill PDF" row on page 1 is that
+                    // bill. No pagination needed.
+                    var currentPageItems = await CollectCurrentPageBillPdfLinksAsync(browser);
+                    var pdfLinks = currentPageItems.Count > 0
+                        ? new List<(string PdfUrl, string RowLabel)> { currentPageItems[0] }
+                        : [];
+                    progress.Report($"Account {accountNumber}: found {pdfLinks.Count} bill(s) to download.");
+
+                    foreach (var (_, rowLabel) in pdfLinks)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        progress.Report($"Account {accountNumber}: downloading bill ({rowLabel})...");
+
+                        // The popup runs hidden in the background, so the main frame stays on the
+                        // billing history table throughout — no need to re-navigate between bills.
+                        var pdfBytes = await PgeWebViewAutomationHelper.ClickBillPdfLinkAndDownloadAsync(browser, rowLabel, _logFile);
+                        var fileName = $"{accountNumber}_{allBills.Count + 1}.pdf";
+                        var record = PdfBillParserHelper.Parse(pdfBytes, fileName, _logFile);
+                        record.AccountNumber = string.IsNullOrWhiteSpace(record.AccountNumber) ? accountNumber : record.AccountNumber;
+
+                        allBills.Add(record);
+                        progress.Report($"Account {accountNumber}: parsed bill dated {record.StatementDate:MM/dd/yyyy}, total ${record.TotalBillAmount}.");
+                    }
                 }
-
-                // Only the current/latest bill for this account is wanted — the billing history table
-                // lists rows newest-first, so the first "View Bill PDF" row on page 1 is that bill. No
-                // pagination needed.
-                var currentPageItems = await CollectCurrentPageBillPdfLinksAsync(browser);
-                var pdfLinks = currentPageItems.Count > 0
-                    ? new List<(string PdfUrl, string RowLabel)> { currentPageItems[0] }
-                    : [];
-                progress.Report($"Account {accountNumber}: found {pdfLinks.Count} bill(s) to download.");
-
-                foreach (var (_, rowLabel) in pdfLinks)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    progress.Report($"Account {accountNumber}: downloading bill ({rowLabel})...");
-
-                    // The popup opens off-screen in its own window, so the main frame stays on the
-                    // billing history table throughout — no need to re-navigate between bills.
-                    var pdfBytes = await PgeWebViewAutomationHelper.ClickBillPdfLinkAndDownloadAsync(browser, rowLabel, _logFile);
-                    var fileName = $"{accountNumber}_{allBills.Count + 1}.pdf";
-                    var record = PdfBillParserHelper.Parse(pdfBytes, fileName, _logFile);
-                    record.AccountNumber = string.IsNullOrWhiteSpace(record.AccountNumber) ? accountNumber : record.AccountNumber;
-
-                    allBills.Add(record);
-                    progress.Report($"Account {accountNumber}: parsed bill dated {record.StatementDate:MM/dd/yyyy}, total ${record.TotalBillAmount}.");
+                    _logger.LogError(ex, "PgeScrapingService: account {AccountNumber} failed, skipping it", accountNumber);
+                    _logFile.Append($"Account {accountNumber}: failed and was skipped — {ex.Message}");
+                    progress.Report($"Account {accountNumber}: failed ({ex.Message}) — skipping to the next account.");
                 }
             }
 

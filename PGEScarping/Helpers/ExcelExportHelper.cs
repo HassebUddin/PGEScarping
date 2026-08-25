@@ -9,7 +9,8 @@ public static class ExcelExportHelper
     [
         "Account Number", "Account Name", "Statement Date", "Due Date",
         "Total Bill Amount", "Electricity Charges", "Credit Received",
-        "Total Tax Amount", "Other Charges", "Gas Charges", "Total Usage (kWh)", "Bill PDF File"
+        "Total Tax Amount", "Other Charges", "Gas Charges", "Total Usage (kWh)",
+        "Bill PDF File", "Sum Check (should = Total Bill Amount)"
     ];
 
     // Reads back a previously-written workbook so a new run can merge into it instead of overwriting
@@ -38,6 +39,7 @@ public static class ExcelExportHelper
                 GasCharges = ws.Cell(row, 10).GetValue<decimal>(),
                 TotalUsageKwh = ws.Cell(row, 11).GetValue<decimal>(),
                 BillPdfFileName = ws.Cell(row, 12).GetString()
+                // Column 13 is the "Sum Check" value column — recomputed on write, not read back.
             });
             row++;
         }
@@ -94,6 +96,9 @@ public static class ExcelExportHelper
             ws.Cell(row, 10).Value = bill.GasCharges;
             ws.Cell(row, 11).Value = bill.TotalUsageKwh;
             ws.Cell(row, 12).Value = bill.BillPdfFileName;
+            // Plain computed value (not a formula) — the 5 charge columns summed, for a quick per-bill
+            // visual check against column E (Total Bill Amount).
+            ws.Cell(row, 13).Value = bill.ElectricityCharges + bill.CreditReceived + bill.TotalTaxAmount + bill.OtherCharges + bill.GasCharges;
 
             if (r % 2 == 1)
                 ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#F8FAFC");

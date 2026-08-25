@@ -294,11 +294,14 @@ return highlightAndClick(opt).then(() => true);
             var deferral = e.GetDeferral();
             try
             {
-                // Left visible (rather than a tiny hidden window) so what the popup is doing —
-                // generating the PDF, or stuck/erroring — can actually be watched.
+                // Kept hidden — a visible popup sits on top of the main window while PG&E generates
+                // the PDF (which can take up to ~90s), and from the user's side that looks identical
+                // to the whole application having frozen/crashed. The download still completes the
+                // same way in the background via the blob-capture script below; nothing about the
+                // actual download depends on the popup being on-screen.
                 popupController = await core.Environment.CreateCoreWebView2ControllerAsync(browser.Handle);
-                popupController.Bounds = new System.Drawing.Rectangle(80, 80, 1000, 750);
-                popupController.IsVisible = true;
+                popupController.Bounds = new System.Drawing.Rectangle(0, 0, 1000, 750);
+                popupController.IsVisible = false;
 
                 var popupCore = popupController.CoreWebView2;
                 popupCore.NavigationStarting += (_, navArgs) => logFile?.Append($"Popup navigating to: {navArgs.Uri}");
