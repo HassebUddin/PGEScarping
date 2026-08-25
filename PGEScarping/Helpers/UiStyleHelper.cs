@@ -4,21 +4,24 @@ namespace PGEScarping.Helpers;
 
 public static class UiStyleHelper
 {
-    public static readonly Color Background = Color.FromArgb(15, 16, 22);
-    public static readonly Color Sidebar = Color.FromArgb(19, 20, 28);
-    public static readonly Color SidebarDeep = Color.FromArgb(13, 14, 20);
-    public static readonly Color Surface = Color.FromArgb(26, 28, 38);
-    public static readonly Color SurfaceHover = Color.FromArgb(34, 37, 50);
-    public static readonly Color Accent = Color.FromArgb(94, 129, 244);
-    public static readonly Color AccentSoft = Color.FromArgb(40, 44, 66);
-    public static readonly Color AccentStart = Color.FromArgb(99, 102, 241);
-    public static readonly Color AccentEnd = Color.FromArgb(56, 189, 248);
-    public static readonly Color Success = Color.FromArgb(84, 209, 143);
-    public static readonly Color Warning = Color.FromArgb(224, 168, 84);
-    public static readonly Color Danger = Color.FromArgb(239, 83, 96);
-    public static readonly Color TextPrimary = Color.FromArgb(232, 234, 240);
-    public static readonly Color TextSecondary = Color.FromArgb(140, 145, 165);
-    public static readonly Color LogText = Color.FromArgb(150, 230, 170);
+    // Minimal black/white palette — near-white surfaces everywhere, ink-black as the one accent
+    // color, no gradients or extra hues.
+    public static readonly Color Background = Color.FromArgb(250, 250, 250);
+    public static readonly Color Sidebar = Color.FromArgb(255, 255, 255);
+    public static readonly Color SidebarDeep = Color.FromArgb(255, 255, 255);
+    public static readonly Color Surface = Color.FromArgb(255, 255, 255);
+    public static readonly Color SurfaceHover = Color.FromArgb(244, 244, 245);
+    public static readonly Color Border = Color.FromArgb(228, 228, 231);
+    public static readonly Color Accent = Color.FromArgb(17, 17, 17);
+    public static readonly Color AccentSoft = Color.FromArgb(244, 244, 245);
+    public static readonly Color AccentStart = Color.FromArgb(24, 24, 27);
+    public static readonly Color AccentEnd = Color.FromArgb(9, 9, 11);
+    public static readonly Color Success = Color.FromArgb(22, 163, 74);
+    public static readonly Color Warning = Color.FromArgb(180, 83, 9);
+    public static readonly Color Danger = Color.FromArgb(185, 28, 28);
+    public static readonly Color TextPrimary = Color.FromArgb(17, 17, 17);
+    public static readonly Color TextSecondary = Color.FromArgb(113, 113, 122);
+    public static readonly Color LogText = Color.FromArgb(21, 128, 61);
 
     public static void PaintVerticalGradient(Control control, Color top, Color bottom)
     {

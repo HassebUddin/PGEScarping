@@ -12,6 +12,10 @@ public sealed class GradientButton : Panel
     public Color TextColor { get; set; } = Color.White;
     public Font TextFont { get; set; } = new("Segoe UI", 10.5f, FontStyle.Bold);
 
+    // Secondary buttons are flat surface-colored rather than a gradient, which on a light
+    // background needs a visible border to read as a button at all.
+    public bool ShowBorder { get; set; }
+
     private bool _hover;
     private bool _pressed;
     private bool _enabled = true;
@@ -77,6 +81,12 @@ public sealed class GradientButton : Panel
         using var path = UiStyleHelper.RoundedRectPath(rect, radius);
         using var brush = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(Width, 1), Math.Max(Height, 1)), start, end, LinearGradientMode.Horizontal);
         g.FillPath(brush, path);
+
+        if (ShowBorder)
+        {
+            using var borderPen = new Pen(_hover ? UiStyleHelper.Accent : UiStyleHelper.Border, 1.4f);
+            g.DrawPath(borderPen, path);
+        }
 
         var content = string.IsNullOrEmpty(IconGlyph) ? Text : $"{IconGlyph}  {Text}";
         TextRenderer.DrawText(g, content, TextFont, ClientRectangle, _enabled ? TextColor : UiStyleHelper.TextSecondary,

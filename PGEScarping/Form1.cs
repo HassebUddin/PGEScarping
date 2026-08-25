@@ -105,6 +105,11 @@ namespace PGEScarping
                 Cursor = isAvailable ? Cursors.Hand : Cursors.Default,
             };
             UiStyleHelper.ApplyRoundedCorners(card, 16);
+            card.Paint += (_, e) =>
+            {
+                using var pen = new Pen(UiStyleHelper.Border, 1f);
+                e.Graphics.DrawPath(pen, UiStyleHelper.RoundedRectPath(new Rectangle(0, 0, card.Width - 1, card.Height - 1), 16));
+            };
 
             var accentBar = new Panel
             {

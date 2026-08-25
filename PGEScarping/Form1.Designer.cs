@@ -140,6 +140,11 @@ namespace PGEScarping
             sidebarPanel.Width = 300;
             sidebarPanel.Controls.Add(moduleListPanel);
             sidebarPanel.Controls.Add(brandPanel);
+            sidebarPanel.Paint += (_, e) =>
+            {
+                using var pen = new Pen(Helpers.UiStyleHelper.Border, 1f);
+                e.Graphics.DrawLine(pen, sidebarPanel.Width - 1, 0, sidebarPanel.Width - 1, sidebarPanel.Height);
+            };
 
             // moduleIconLabel
             moduleIconLabel.AutoSize = false;
@@ -193,6 +198,7 @@ namespace PGEScarping
             btnOpenFolder.ColorStart = Helpers.UiStyleHelper.Surface;
             btnOpenFolder.ColorEnd = Helpers.UiStyleHelper.Surface;
             btnOpenFolder.TextColor = Helpers.UiStyleHelper.TextPrimary;
+            btnOpenFolder.ShowBorder = true;
             btnOpenFolder.Enabled = false;
             btnOpenFolder.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
             btnOpenFolder.IconGlyph = "📁";
@@ -205,6 +211,7 @@ namespace PGEScarping
             btnViewLog.ColorStart = Helpers.UiStyleHelper.Surface;
             btnViewLog.ColorEnd = Helpers.UiStyleHelper.Surface;
             btnViewLog.TextColor = Helpers.UiStyleHelper.TextPrimary;
+            btnViewLog.ShowBorder = true;
             btnViewLog.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
             btnViewLog.IconGlyph = "📝";
             btnViewLog.Location = new Point(412, 8);
@@ -243,6 +250,11 @@ namespace PGEScarping
             accountNumberBoxWrapper.Padding = new Padding(10, 6, 10, 6);
             accountNumberBoxWrapper.Controls.Add(accountNumberBox);
             Helpers.UiStyleHelper.ApplyRoundedCorners(accountNumberBoxWrapper, 8);
+            accountNumberBoxWrapper.Paint += (_, e) =>
+            {
+                using var pen = new Pen(Helpers.UiStyleHelper.Border, 1f);
+                e.Graphics.DrawPath(pen, Helpers.UiStyleHelper.RoundedRectPath(new Rectangle(0, 0, accountNumberBoxWrapper.Width - 1, accountNumberBoxWrapper.Height - 1), 8));
+            };
 
             // actionsPanel
             actionsPanel.BackColor = Color.Transparent;
@@ -280,6 +292,11 @@ namespace PGEScarping
             codeInputBoxWrapper.Padding = new Padding(8, 4, 8, 4);
             codeInputBoxWrapper.Controls.Add(codeInputBox);
             Helpers.UiStyleHelper.ApplyRoundedCorners(codeInputBoxWrapper, 8);
+            codeInputBoxWrapper.Paint += (_, e) =>
+            {
+                using var pen = new Pen(Helpers.UiStyleHelper.Accent, 1.4f);
+                e.Graphics.DrawPath(pen, Helpers.UiStyleHelper.RoundedRectPath(new Rectangle(0, 0, codeInputBoxWrapper.Width - 1, codeInputBoxWrapper.Height - 1), 8));
+            };
 
             // btnSubmitCode
             btnSubmitCode.ColorStart = Helpers.UiStyleHelper.AccentStart;
