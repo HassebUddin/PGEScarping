@@ -35,7 +35,12 @@ public static class PdfBillParserHelper
         // Charges" subtotal lines stripped out) is what makes generic keyword matching safe — a brand
         // new label this bill has never shown before still gets picked up automatically as long as it's
         // inside the real detail section, without also picking up that unrelated breakdown page.
-        var (pgeSection, pgeAdjustments) = ExtractChargeDetailSection(text, "Delivery", logFile, billPdfFileName);
+        // PG&E's own (non-CCA) side of the bill is usually headed "Details of PG&E Electric Delivery
+        // Charges", but NEM/solar accounts on a community-energy provider instead use "Details of PG&E
+        // Electric Monthly Charges" for the exact same role (PG&E's flat/base charges, taxes,
+        // surcharges) — "Delivery"/"Monthly" is an alternation, not a hardcoded single word, so a bill
+        // using either wording still lands in this same section rather than being silently dropped.
+        var (pgeSection, pgeAdjustments) = ExtractChargeDetailSection(text, "(?:Delivery|Monthly)", logFile, billPdfFileName);
         var (generationSection, generationAdjustments) = ExtractChargeDetailSection(text, "Generation", logFile, billPdfFileName);
 
         // A simpler bill with no CCA/community-energy provider (no PG&E/Delivery vs CCA/Generation
@@ -64,8 +69,14 @@ public static class PdfBillParserHelper
         // space between them (positioning-dependent), so "@\s*\$?" is used everywhere instead of a
         // literal "@$" — a real PDF sample confirmed a bare "@\$" match fails and silently zeroes out
         // every downstream sum.
+        // Some CCAs (e.g. Central Coast Community Energy) append the billing sub-period's start date
+        // right after the season word — "Peak - Summer - 07/16 1,043.924000 kWh @$0.15644 $163.31" —
+        // instead of just "Peak Summer"/"Peak - Summer". Rather than hardcode that one date-suffix
+        // shape, the gap between the season word and the kWh number tolerates any short run of
+        // non-newline filler (dashes, a date, or some future wording not seen yet), so a new provider
+        // variant here doesn't require another regex patch.
         record.ElectricityCharges = SumAllMatches(chargesScope,
-            @"(?:Off[- ]?Peak(?:\s*-?\s*(?:Summer|Winter))?|Peak(?:\s*-?\s*(?:Summer|Winter))?)\s+[\d.,]+\s*kWh\s*@\s*\$?[\d.]+\s*\$?(-?[\d,]+\.\d{2})");
+            @"(?:Off[- ]?Peak|Peak)(?:[ \t]*-?[ \t]*(?:Summer|Winter))?(?:[ \t\-]{0,20}[\d/]{0,10})?\s+[\d.,]+\s*kWh\s*@\s*\$?[\d.]+\s*\$?(-?[\d,]+\.\d{2})");
 
         // Credits: rather than a fixed list of known credit labels, any label ending in the word
         // "Credit" is treated as one — a label this bill has never shown before still gets picked up
@@ -91,10 +102,22 @@ public static class PdfBillParserHelper
         // electric credit); since ExtractChargeDetailSection is only ever called for the Electric
         // Delivery/Generation/plain sections, never for Gas, this scoping keeps that Gas-side
         // adjustment out automatically rather than needing its own exclusion logic.
+        // A NEM/solar bill can instead place its Adjustments block inside a completely separate
+        // "Details of NEM Charges" section (not right after any Electric Delivery/Generation/plain
+        // section's own Total line), so the three section-scoped lookups above find nothing there. The
+        // bill's own "Your Account Summary" page always echoes the same net figure on a single
+        // "Electric Adjustments <amount>" line regardless of which detail section it came from, so that
+        // is used as a fallback anchor — but only when none of the three section-scoped lookups already
+        // found an Adjustments block, to avoid double-counting the same credit twice on a bill where it
+        // WAS found in its usual place.
+        var sectionAdjustments = pgeAdjustments + generationAdjustments + plainAdjustments;
+        if (sectionAdjustments == 0m)
+            sectionAdjustments = MatchAmount(text, @"Electric Adjustments[ \t]+(-?\$?-?[\d,]+\.\d{2})");
+
         record.CreditReceived = SumAllMatches(chargesScope,
                 @"[A-Za-z][A-Za-z'()%.\- ]*?Credit(?:[ \t]+[\d.,]+\s*kWh[ \t]*@[ \t]*-?\$?-?[\d.]+)?[ \t]+(-?\$?-?[\d,]+\.\d{2})")
             + SumAllMatches(chargesScope, @"Bright Choice[ \t]+(-?\$?-?[\d,]+\.\d{2})")
-            + pgeAdjustments + generationAdjustments + plainAdjustments;
+            + sectionAdjustments;
 
         // Taxes: any label ending in "Tax" is summed generically (city utility users' taxes vary by
         // name — Stockton, Fairfield, San Francisco, etc. — and this also picks up "Energy Commission
@@ -182,7 +205,20 @@ public static class PdfBillParserHelper
         // line — scoped to THIS call's Electric section specifically, so a Gas Charges section's own
         // unrelated "Adjustments"/"Total Adjustments" block (e.g. a "Refund Draft") is never reached,
         // since this method is never invoked for Gas.
+        // On a bill with several detail sections close together (e.g. PG&E Monthly + CCA Generation +
+        // NEM, all within a few hundred chars of each other), that 400-char cap alone isn't enough — it
+        // was found to reach straight through a $0.00 Generation section's own Total line into an
+        // unrelated later "Details of NEM Charges" block, double-counting the SAME Adjustments total
+        // once for the PG&E section and again for Generation. Truncating the lookahead window at the
+        // next "Details of ... Charges" header (if any) keeps each call scoped to only the gap between
+        // THIS section's Total line and the start of the next section, so only whichever single section
+        // truly owns that Adjustments block picks it up. The next header isn't necessarily "...
+        // Electric ... Charges" — e.g. "Details of NEM Charges" has no "Electric" in it — so this check
+        // deliberately doesn't require that word, only "Details of ... Charges" generically.
         var afterTotal = remainder[endMatch.Index..];
+        var nextSectionMatch = Regex.Match(afterTotal, @"Details\s+of[\s\S]{0,80}?Charges", RegexOptions.IgnoreCase);
+        if (nextSectionMatch.Success)
+            afterTotal = afterTotal[..nextSectionMatch.Index];
         var adjustmentsMatch = Regex.Match(afterTotal, @"\bAdjustments\b[\s\S]{0,400}?\bTotal\s+Adjustments\b[^\n]*?(-?\$?-?[\d,]+\.\d{2})", RegexOptions.IgnoreCase);
         var adjustmentsTotal = 0m;
         if (adjustmentsMatch.Success)
