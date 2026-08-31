@@ -45,10 +45,12 @@ namespace PGEScarping
         private async void Form1_Load(object? sender, EventArgs e)
         {
             btnStart.Enabled = false;
+            btnStartAll.Enabled = false;
             SetStatus("Initializing embedded browser...", StatusKind.Running);
             await browserView.EnsureCoreWebView2Async();
             SetStatus(_currentModule?.IsAvailable == true ? "Ready." : "This module is coming soon.", StatusKind.Ready);
             btnStart.Enabled = _currentModule?.IsAvailable == true;
+            btnStartAll.Enabled = _currentModule?.IsAvailable == true;
         }
 
         private enum StatusKind { Ready, Running, Success, Error }
@@ -208,6 +210,7 @@ namespace PGEScarping
             moduleDescLabel.Text = module.Description;
             SetStatus(module.IsAvailable ? "Ready." : "This module is coming soon.", StatusKind.Ready);
             btnStart.Enabled = module.IsAvailable;
+            btnStartAll.Enabled = module.IsAvailable;
             btnOpenFolder.Enabled = false;
         }
 
@@ -224,8 +227,27 @@ namespace PGEScarping
                 return;
             }
 
+            await RunScrapeAsync(accountNumberOverride);
+        }
+
+        // Runs every account discovered on the login (no override) — used to bulk-verify all ~80
+        // accounts' latest bill in one pass instead of running them one at a time by hand.
+        private async void btnStartAll_Click(object? sender, EventArgs e)
+        {
+            if (_currentModule is null || !_currentModule.IsAvailable)
+                return;
+
+            await RunScrapeAsync(accountNumberOverride: null);
+        }
+
+        private async Task RunScrapeAsync(string? accountNumberOverride)
+        {
+            if (_currentModule is null)
+                return;
+
             _isRunning = true;
             btnStart.Enabled = false;
+            btnStartAll.Enabled = false;
             btnOpenFolder.Enabled = false;
             SetStatus("Running...", StatusKind.Running);
             progressBar.IsRunning = true;
@@ -253,6 +275,7 @@ namespace PGEScarping
             {
                 progressBar.IsRunning = false;
                 btnStart.Enabled = true;
+                btnStartAll.Enabled = true;
                 _isRunning = false;
                 codePromptPanel.Visible = false;
                 _pendingInputPrompt = null;

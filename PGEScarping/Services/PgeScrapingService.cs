@@ -101,7 +101,7 @@ public sealed class PgeScrapingService : IScrapingModule
             }
 
             var accountNumbers = string.IsNullOrWhiteSpace(accountNumberOverride)
-                ? await DiscoverAccountNumbersAsync(browser)
+                ? await DiscoverAllAccountNumbersAsync(browser)
                 : [accountNumberOverride.Trim()];
             if (accountNumbers.Count == 0)
             {
@@ -117,6 +117,15 @@ public sealed class PgeScrapingService : IScrapingModule
             progress.Report($"Found {accountNumbers.Count} account(s): {string.Join(", ", accountNumbers)}");
 
             var allBills = new List<PgeBillRecord>();
+
+            // A fresh, uniquely-named file per run (instead of merging into one shared workbook) so
+            // each run's export stands on its own. The path is fixed up front and the workbook is
+            // rewritten after every account (not just once at the very end) so the file is readable
+            // and up to date the whole time a long "process all ~80 accounts" run is still going,
+            // rather than only appearing once the entire run finishes.
+            Directory.CreateDirectory(_options.OutputFolder);
+            var outputFileName = $"PGE_Billing_History_{DateTime.Now:yyyy-MM-dd_HHmmss}.xlsx";
+            var outputFilePath = Path.Combine(_options.OutputFolder, outputFileName);
 
             foreach (var accountNumber in accountNumbers)
             {
@@ -175,6 +184,12 @@ public sealed class PgeScrapingService : IScrapingModule
 
                         allBills.Add(record);
                         progress.Report($"Account {accountNumber}: parsed bill dated {record.StatementDate:MM/dd/yyyy}, total ${record.TotalBillAmount}.");
+
+                        // Rewrite the workbook now rather than waiting for the whole run to finish —
+                        // on an ~80-account run this means the file is already there and current after
+                        // the very first account, so it can be opened and checked mid-run instead of
+                        // only once every account has been attempted.
+                        ExcelExportHelper.WriteWorkbook(outputFilePath, allBills);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -185,13 +200,10 @@ public sealed class PgeScrapingService : IScrapingModule
                 }
             }
 
-            Directory.CreateDirectory(_options.OutputFolder);
-
-            // A fresh, uniquely-named file per run (instead of merging into one shared workbook) so
-            // each run's export stands on its own.
-            var outputFileName = $"PGE_Billing_History_{DateTime.Now:yyyy-MM-dd_HHmmss}.xlsx";
-            var outputFilePath = Path.Combine(_options.OutputFolder, outputFileName);
-            ExcelExportHelper.WriteWorkbook(outputFilePath, allBills);
+            // If every account failed before ever reaching the per-account write above, the file
+            // still needs to exist (empty) so the result's OutputFilePath is actually valid.
+            if (allBills.Count == 0)
+                ExcelExportHelper.WriteWorkbook(outputFilePath, allBills);
 
             progress.Report($"Done. {allBills.Count} bill(s) scraped this run, saved to {outputFilePath}.");
 
@@ -305,34 +317,89 @@ function findAccountOptions(root, results) {
 }
 ";
 
+    // Right after login, the dashboard shows a "Your personal dashboard is almost ready!" loading
+    // screen for a few seconds before the account search box actually exists in the DOM at all — a
+    // real run showed DiscoverAccountNumbersAsync being called during that window, where
+    // findAccountBox returns null, opened comes back "false", and the whole dropdown-polling path is
+    // skipped entirely (landing straight on the single-account fallback in under 2 seconds — far too
+    // fast for the ~6s of polling that path does). Waiting for the box to exist first (the same wait
+    // SwitchToAccountAsync's caller already does before switching accounts) fixes that.
+    private async Task<List<string>> DiscoverAllAccountNumbersAsync(WebView2 browser)
+    {
+        await WaitForAccountSearchBoxAsync(browser);
+        return await DiscoverAccountNumbersAsync(browser);
+    }
+
     private async Task<List<string>> DiscoverAccountNumbersAsync(WebView2 browser)
     {
+        // This is a Lightning typeahead combobox (the same component SwitchToAccountAsync drives
+        // below) — just focusing/clicking it, with no value change, never renders its listbox at all;
+        // it only opens in response to the search-filter actually changing. SwitchToAccountAsync works
+        // because it sets the input to a real account number, which naturally shows just that one
+        // match. Discovery needs every account's row, so this clears the input (rather than typing a
+        // narrowing character) via the same native setter + 'input' event dispatch used there — an
+        // empty search is what shows the complete unfiltered list of every linked account.
         var openDropdownScript = AccountSearchBoxScript + @"
 const el = findAccountBox(document);
 if (!el) return false;
 el.focus();
 el.dispatchEvent(new Event('focus', { bubbles: true }));
+const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+setter.call(el, '');
+el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Backspace' }));
+el.dispatchEvent(new Event('input', { bubbles: true }));
+el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Backspace' }));
 el.click();
 return true;
 ";
         var opened = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, openDropdownScript);
         if (opened.Trim('"') == "true")
         {
-            await Task.Delay(1200);
-
+            // The dropdown's listbox renders asynchronously after the focus/click above — a real run
+            // showed a single fixed 1200ms wait wasn't always enough (the listbox can take longer to
+            // populate, especially right after login while the page is still settling), which made
+            // this fall through to the single-account fallback below even on a login with many
+            // accounts. Polling for actual results (up to ~6s) instead of guessing one fixed delay
+            // fixes that.
             var collectScript = FindAccountOptionsJs + @"
 const results = [];
 findAccountOptions(document, results);
 return JSON.stringify([...new Set(results)]);
 ";
-            var json = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, collectScript);
-            var raw = JsonSerializer.Deserialize<string>(json) ?? json;
-            var options = JsonSerializer.Deserialize<List<string>>(raw) ?? [];
-            if (options.Count > 0)
+            for (var attempt = 0; attempt < 12; attempt++)
             {
-                _logFile.Append($"DiscoverAccountNumbersAsync: found {options.Count} account(s) via dropdown: {string.Join(", ", options)}");
-                return options;
+                await Task.Delay(500);
+
+                var json = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, collectScript);
+                var raw = JsonSerializer.Deserialize<string>(json) ?? json;
+                var options = JsonSerializer.Deserialize<List<string>>(raw) ?? [];
+                if (options.Count > 0)
+                {
+                    _logFile.Append($"DiscoverAccountNumbersAsync: found {options.Count} account(s) via dropdown: {string.Join(", ", options)}");
+                    return options;
+                }
             }
+
+            // Nothing was found via the listbox selectors — dump the actual DOM state around the
+            // search box so the real cause (wrong selector, listbox never opening, different markup)
+            // can be diagnosed from the log instead of guessed at blind.
+            var diagnosticScript = AccountSearchBoxScript + @"
+const el = findAccountBox(document);
+if (!el) return 'no account box found for diagnostics';
+const info = {
+  value: el.value,
+  ariaExpanded: el.getAttribute('aria-expanded'),
+  ariaControls: el.getAttribute('aria-controls'),
+  ariaControlsElementExists: el.getAttribute('aria-controls') ? !!document.getElementById(el.getAttribute('aria-controls')) : false,
+  ariaControlsElementHtml: el.getAttribute('aria-controls') && document.getElementById(el.getAttribute('aria-controls'))
+    ? document.getElementById(el.getAttribute('aria-controls')).outerHTML.slice(0, 2000)
+    : null,
+  outerHtml: el.outerHTML.slice(0, 500)
+};
+return JSON.stringify(info);
+";
+            var diagnosticJson = await PgeWebViewAutomationHelper.ExecuteJsAsync(browser, diagnosticScript);
+            _logFile.Append($"DiscoverAccountNumbersAsync: diagnostic dump of the search box after trying to open its dropdown: {diagnosticJson}");
         }
 
         _logFile.Append("DiscoverAccountNumbersAsync: no account dropdown/listbox found, falling back to the single currently-loaded account.");

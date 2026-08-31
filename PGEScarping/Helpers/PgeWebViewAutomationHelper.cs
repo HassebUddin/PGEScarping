@@ -285,40 +285,54 @@ return highlightAndClick(opt).then(() => true);
             }
             catch (Exception ex)
             {
-                pdfTcs.TrySetException(ex);
+                // This runs on a native WebView2 callback, not a normal .NET call stack — letting
+                // anything escape here (even TrySetException itself failing) risks crashing the whole
+                // process rather than just this one bill, so it's swallowed as a last resort.
+                try { pdfTcs.TrySetException(ex); } catch { /* best effort */ }
             }
         }
 
         async void OnNewWindow(object? s, CoreWebView2NewWindowRequestedEventArgs e)
         {
+            // This is "async void" because it's a WebView2 event handler (the event signature requires
+            // it), which means any exception escaping it crashes the whole process instead of being
+            // catchable by a caller — every path through this method, including the deferral itself,
+            // is wrapped so nothing can escape.
             var deferral = e.GetDeferral();
             try
             {
-                // Kept hidden — a visible popup sits on top of the main window while PG&E generates
-                // the PDF (which can take up to ~90s), and from the user's side that looks identical
-                // to the whole application having frozen/crashed. The download still completes the
-                // same way in the background via the blob-capture script below; nothing about the
-                // actual download depends on the popup being on-screen.
-                popupController = await core.Environment.CreateCoreWebView2ControllerAsync(browser.Handle);
-                popupController.Bounds = new System.Drawing.Rectangle(0, 0, 1000, 750);
-                popupController.IsVisible = false;
+                try
+                {
+                    // Kept hidden — a visible popup sits on top of the main window while PG&E
+                    // generates the PDF (which can take up to ~90s), and from the user's side that
+                    // looks identical to the whole application having frozen/crashed. The download
+                    // still completes the same way in the background via the blob-capture script
+                    // below; nothing about the actual download depends on the popup being on-screen.
+                    popupController = await core.Environment.CreateCoreWebView2ControllerAsync(browser.Handle);
+                    popupController.Bounds = new System.Drawing.Rectangle(0, 0, 1000, 750);
+                    popupController.IsVisible = false;
 
-                var popupCore = popupController.CoreWebView2;
-                popupCore.NavigationStarting += (_, navArgs) => logFile?.Append($"Popup navigating to: {navArgs.Uri}");
-                popupCore.NavigationCompleted += (_, _) => logFile?.Append($"Popup navigation completed: {popupCore.Source}");
-                await popupCore.AddScriptToExecuteOnDocumentCreatedAsync(CaptureBlobJs);
-                popupCore.WebMessageReceived += OnMessage;
+                    var popupCore = popupController.CoreWebView2;
+                    popupCore.NavigationStarting += (_, navArgs) => logFile?.Append($"Popup navigating to: {navArgs.Uri}");
+                    popupCore.NavigationCompleted += (_, _) => logFile?.Append($"Popup navigation completed: {popupCore.Source}");
+                    await popupCore.AddScriptToExecuteOnDocumentCreatedAsync(CaptureBlobJs);
+                    popupCore.WebMessageReceived += OnMessage;
 
-                e.NewWindow = popupCore;
-                e.Handled = true;
+                    e.NewWindow = popupCore;
+                    e.Handled = true;
+                }
+                catch (Exception ex)
+                {
+                    pdfTcs.TrySetException(ex);
+                }
             }
             catch (Exception ex)
             {
-                pdfTcs.TrySetException(ex);
+                logFile?.Append($"OnNewWindow: unexpected error setting up the popup, giving up on this bill — {ex}");
             }
             finally
             {
-                deferral.Complete();
+                try { deferral.Complete(); } catch { /* best effort — already completed or invalid */ }
             }
         }
 
@@ -365,8 +379,14 @@ return false;
         }
         finally
         {
-            core.NewWindowRequested -= OnNewWindow;
-            core.WebMessageReceived -= OnMessage;
+            // Best-effort cleanup only — the browser/popup can already be torn down by this point
+            // (e.g. the main frame navigated away while a slow PDF was still pending), and an
+            // exception thrown while unsubscribing/closing here must never be allowed to propagate:
+            // this whole method is invoked from a fire-and-forget path deep inside a per-account
+            // loop, and any exception escaping a finally block bypasses the caller's own try/catch,
+            // which previously crashed the whole application instead of just failing this one bill.
+            try { core.NewWindowRequested -= OnNewWindow; } catch { /* best effort cleanup */ }
+            try { core.WebMessageReceived -= OnMessage; } catch { /* best effort cleanup */ }
             try { popupController?.Close(); } catch { /* best effort cleanup */ }
         }
     }

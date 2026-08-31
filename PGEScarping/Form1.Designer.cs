@@ -19,6 +19,7 @@ namespace PGEScarping
         private Label moduleDescLabel;
         private Panel actionsPanel;
         private Helpers.GradientButton btnStart;
+        private Helpers.GradientButton btnStartAll;
         private Helpers.GradientButton btnOpenFolder;
         private Helpers.GradientButton btnViewLog;
         private Label statusLabel;
@@ -58,6 +59,7 @@ namespace PGEScarping
             moduleDescLabel = new Label();
             actionsPanel = new Panel();
             btnStart = new Helpers.GradientButton();
+            btnStartAll = new Helpers.GradientButton();
             btnOpenFolder = new Helpers.GradientButton();
             btnViewLog = new Helpers.GradientButton();
             statusLabel = new Label();
@@ -194,6 +196,19 @@ namespace PGEScarping
             btnStart.Text = "Start Scraping";
             btnStart.Click += btnStart_Click;
 
+            // btnStartAll — runs every discovered account in one go (no account number needed),
+            // for the user to bulk-verify the latest bill from all ~80 accounts at once.
+            btnStartAll.ColorStart = Helpers.UiStyleHelper.Surface;
+            btnStartAll.ColorEnd = Helpers.UiStyleHelper.Surface;
+            btnStartAll.TextColor = Helpers.UiStyleHelper.TextPrimary;
+            btnStartAll.ShowBorder = true;
+            btnStartAll.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
+            btnStartAll.IconGlyph = "⏩";
+            btnStartAll.Location = new Point(206, 8);
+            btnStartAll.Size = new Size(200, 44);
+            btnStartAll.Text = "Process All Accounts";
+            btnStartAll.Click += btnStartAll_Click;
+
             // btnOpenFolder
             btnOpenFolder.ColorStart = Helpers.UiStyleHelper.Surface;
             btnOpenFolder.ColorEnd = Helpers.UiStyleHelper.Surface;
@@ -202,9 +217,9 @@ namespace PGEScarping
             btnOpenFolder.Enabled = false;
             btnOpenFolder.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
             btnOpenFolder.IconGlyph = "📁";
-            btnOpenFolder.Location = new Point(206, 8);
-            btnOpenFolder.Size = new Size(190, 44);
-            btnOpenFolder.Text = "Open Output Folder";
+            btnOpenFolder.Location = new Point(416, 8);
+            btnOpenFolder.Size = new Size(160, 44);
+            btnOpenFolder.Text = "Open Folder";
             btnOpenFolder.Click += btnOpenFolder_Click;
 
             // btnViewLog
@@ -214,8 +229,8 @@ namespace PGEScarping
             btnViewLog.ShowBorder = true;
             btnViewLog.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
             btnViewLog.IconGlyph = "📝";
-            btnViewLog.Location = new Point(412, 8);
-            btnViewLog.Size = new Size(160, 44);
+            btnViewLog.Location = new Point(586, 8);
+            btnViewLog.Size = new Size(140, 44);
             btnViewLog.Text = "View Log File";
             btnViewLog.Click += btnViewLog_Click;
 
@@ -231,7 +246,7 @@ namespace PGEScarping
             accountNumberCaptionLabel.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
             accountNumberCaptionLabel.ForeColor = Helpers.UiStyleHelper.TextSecondary;
             accountNumberCaptionLabel.Location = new Point(2, 90);
-            accountNumberCaptionLabel.Text = "Account number (required):";
+            accountNumberCaptionLabel.Text = "Account number (for single-account runs):";
 
             // accountNumberBox
             accountNumberBox.BackColor = Helpers.UiStyleHelper.Surface;
@@ -245,8 +260,8 @@ namespace PGEScarping
 
             // accountNumberBoxWrapper
             accountNumberBoxWrapper.BackColor = Helpers.UiStyleHelper.Surface;
-            accountNumberBoxWrapper.Location = new Point(190, 84);
-            accountNumberBoxWrapper.Size = new Size(340, 32);
+            accountNumberBoxWrapper.Location = new Point(250, 84);
+            accountNumberBoxWrapper.Size = new Size(280, 32);
             accountNumberBoxWrapper.Padding = new Padding(10, 6, 10, 6);
             accountNumberBoxWrapper.Controls.Add(accountNumberBox);
             Helpers.UiStyleHelper.ApplyRoundedCorners(accountNumberBoxWrapper, 8);
@@ -265,6 +280,7 @@ namespace PGEScarping
             actionsPanel.Controls.Add(statusLabel);
             actionsPanel.Controls.Add(btnViewLog);
             actionsPanel.Controls.Add(btnOpenFolder);
+            actionsPanel.Controls.Add(btnStartAll);
             actionsPanel.Controls.Add(btnStart);
 
             // codePromptLabel
